@@ -16,24 +16,6 @@ export const EXPERIMENTAL_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     ]
   },
   {
-    title: 'Agent Orchestration',
-    description:
-      'Coordinate multiple coding agents via messaging, task DAGs, dispatch, and decision gates.',
-    keywords: [
-      'experimental',
-      'orchestration',
-      'multi-agent',
-      'agents',
-      'coordination',
-      'messaging',
-      'dispatch',
-      'task',
-      'DAG',
-      'worker',
-      'coordinator'
-    ]
-  },
-  {
     title: 'Activity Page',
     description: 'Slack-style worktree activity feed for agent completions and blocking states.',
     keywords: [
@@ -79,7 +61,6 @@ function findEntry(title: string): SettingsSearchEntry {
 
 export const EXPERIMENTAL_SEARCH_ENTRY = {
   pet: findEntry('Pet'),
-  orchestration: findEntry('Agent Orchestration'),
   activity: findEntry('Activity Page'),
   symlinks: findEntry('Symlinks on worktrees')
 } as const
