@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { AgentHookServer, _internals } from './server'
+import { AGENT_STATUS_MAX_FIELD_LENGTH } from '../../shared/agent-status-types'
 
 const PANE = 'tab-1:0'
 
@@ -122,11 +123,10 @@ describe('AgentHookServer listener replay', () => {
     }
   })
 
-  // Why: agent-status-over-SSH §3 — the relay forwards `env`/`version`
-  // verbatim from the agent CLI's POST body. ingestRemote must run the same
-  // warn-once cross-build and dev-vs-prod diagnostics the local HTTP path
-  // runs, so a remote source of stale hooks emits the same noise locally.
-  it('runs warn-once env/version diagnostics on relay-forwarded events without re-normalizing the payload', async () => {
+  // Why: agent-status-over-SSH §3 — ingestRemote must run the same warn-once
+  // cross-build diagnostics the local HTTP path runs, so a remote source of
+  // genuinely stale hooks emits the same signal locally.
+  it('runs warn-once env/version diagnostics on relay-forwarded events', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })
     try {
@@ -196,7 +196,7 @@ describe('AgentHookServer listener replay', () => {
     }
   })
 
-  it('passes through matching env/version metadata silently and does not re-normalize the payload', async () => {
+  it('treats remote env as normal relay traffic and normalizes payload at the trust boundary', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })
     try {
@@ -204,32 +204,35 @@ describe('AgentHookServer listener replay', () => {
       const listener = vi.fn()
       server.setListener(listener)
 
-      // Why: ingestRemote should not re-run normalizeHookPayload — pass a
-      // payload missing the hook envelope shape (no hook_event_name) so a
-      // re-normalization call would drop it. The event must still flow.
+      const oversizedPrompt = 'x'.repeat(AGENT_STATUS_MAX_FIELD_LENGTH + 50)
       server.ingestRemote(
         {
-          paneKey: 'tab-3:0',
-          tabId: 'tab-3',
-          worktreeId: 'wt-3',
-          env: 'production',
+          paneKey: ' tab-3:0 ',
+          tabId: ' tab-3 ',
+          worktreeId: ' wt-3 ',
+          env: 'remote',
           version: '1',
           payload: {
             state: 'done',
-            paneKey: 'tab-3:0',
-            updatedAt: Date.now(),
+            prompt: oversizedPrompt,
             agentType: 'codex'
           }
         },
-        'conn-9'
+        ' conn-9 '
       )
 
       expect(listener).toHaveBeenCalledTimes(1)
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
           paneKey: 'tab-3:0',
+          tabId: 'tab-3',
+          worktreeId: 'wt-3',
           connectionId: 'conn-9',
-          payload: expect.objectContaining({ state: 'done', agentType: 'codex' })
+          payload: expect.objectContaining({
+            state: 'done',
+            agentType: 'codex',
+            prompt: 'x'.repeat(AGENT_STATUS_MAX_FIELD_LENGTH)
+          })
         })
       )
       expect(warn).not.toHaveBeenCalled()
@@ -1352,6 +1355,10 @@ describe('Endpoint file lifecycle', () => {
       server.ingestRemote({ paneKey: '', payload: { state: 'working' } } as never, 'conn-x')
       // Missing payload state
       server.ingestRemote({ paneKey: 'tab-1:0', payload: { foo: 'bar' } }, 'conn-x')
+      // Invalid payload state
+      server.ingestRemote({ paneKey: 'tab-1:0', payload: { state: 'nonsense' } }, 'conn-x')
+      // Empty connection id
+      server.ingestRemote({ paneKey: 'tab-1:0', payload: { state: 'working' } }, '  ')
       // Wrong types
       server.ingestRemote(
         { paneKey: 'tab-1:0', payload: 'not-an-object' as unknown } as never,

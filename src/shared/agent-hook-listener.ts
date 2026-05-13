@@ -28,7 +28,7 @@ import { join } from 'path'
 
 import { parseAgentStatusPayload, type ParsedAgentStatusPayload } from './agent-status-types'
 import { ORCA_HOOK_PROTOCOL_VERSION } from './agent-hook-types'
-import type { AgentHookSource } from './agent-hook-relay'
+import { REMOTE_AGENT_HOOK_ENV, type AgentHookSource } from './agent-hook-relay'
 
 /** Maximum request body size accepted by the listener (1 MB). */
 export const HOOK_REQUEST_MAX_BYTES = 1_000_000
@@ -83,9 +83,8 @@ export function clearAllListenerCaches(state: HookListenerState): void {
 /** Emit warn-once diagnostics for cross-build (`version`) and dev-vs-prod
  *  (`env`) mismatches. Shared between the local HTTP path
  *  (`normalizeHookPayload`) and the relay-forwarded path
- *  (`AgentHookServer.ingestRemote`) so a remote-sourced event triggers the
- *  same diagnostic noise as a local one — see
- *  docs/design/agent-status-over-ssh.md §3 ("Replay / version mismatch"). */
+ *  (`AgentHookServer.ingestRemote`). The relay's "remote" marker is a
+ *  location tag, not a build env, so it must not look like stale local hooks. */
 export function warnOnHookEnvOrVersionMismatch(
   state: HookListenerState,
   fields: { version?: string; env?: string; expectedEnv: string }
@@ -103,7 +102,7 @@ export function warnOnHookEnvOrVersionMismatch(
         'Reinstall agent hooks from Settings to upgrade the managed script.'
     )
   }
-  if (env && env !== expectedEnv) {
+  if (env && env !== REMOTE_AGENT_HOOK_ENV && env !== expectedEnv) {
     const key = `${env}->${expectedEnv}`
     if (!state.warnedEnvs.has(key) && state.warnedEnvs.size < MAX_WARNED_KEYS) {
       state.warnedEnvs.add(key)

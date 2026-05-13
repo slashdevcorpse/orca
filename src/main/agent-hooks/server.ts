@@ -22,6 +22,7 @@ import {
   createHookListenerState,
   getEndpointFileName,
   HOOK_REQUEST_SLOWLORIS_MS,
+  MAX_PANE_KEY_LEN,
   normalizeHookPayload,
   parseFormEncodedBody,
   readRequestBody,
@@ -258,12 +259,11 @@ export class AgentHookServer {
    *  than the local HTTP server. `connectionId` is the SshChannelMultiplexer
    *  identity Orca holds (the wire envelope carries connectionId: null and
    *  Orca stamps the real value here). The relay has already normalized the
-   *  payload via the shared listener module, so we skip re-normalization and
-   *  feed the envelope into the same `onAgentStatus` fanout the HTTP path
-   *  uses. The `env`/`version` fields are forwarded verbatim from the agent
-   *  CLI's POST body on the remote and validated here so the warn-once
-   *  cross-build / dev-vs-prod diagnostics fire identically to the local
-   *  HTTP path. See docs/design/agent-status-over-ssh.md §3, §5. */
+   *  payload via the shared listener module, but main is still the SSH trust
+   *  boundary: re-run the canonical status normalizer before caching or
+   *  persisting anything. The `env`/`version` fields are forwarded verbatim
+   *  from the agent CLI's POST body on the remote and validated here so the
+   *  warn-once diagnostics fire for real cross-build mismatches. */
   ingestRemote(
     envelope: {
       paneKey: string
@@ -275,15 +275,36 @@ export class AgentHookServer {
     },
     connectionId: string
   ): void {
-    if (!envelope || typeof envelope.paneKey !== 'string' || envelope.paneKey.length === 0) {
+    if (typeof connectionId !== 'string') {
       return
     }
-    const payload = envelope.payload
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      typeof (payload as { state?: unknown }).state !== 'string'
-    ) {
+    const trimmedConnectionId = connectionId.trim()
+    if (trimmedConnectionId.length === 0) {
+      return
+    }
+    if (!envelope || typeof envelope.paneKey !== 'string') {
+      return
+    }
+    const paneKey = envelope.paneKey.trim()
+    if (paneKey.length === 0 || paneKey.length > MAX_PANE_KEY_LEN) {
+      return
+    }
+    if (envelope.tabId !== undefined && typeof envelope.tabId !== 'string') {
+      return
+    }
+    if (envelope.worktreeId !== undefined && typeof envelope.worktreeId !== 'string') {
+      return
+    }
+    const tabId =
+      envelope.tabId !== undefined && envelope.tabId.trim().length > 0
+        ? envelope.tabId.trim()
+        : undefined
+    const worktreeId =
+      envelope.worktreeId !== undefined && envelope.worktreeId.trim().length > 0
+        ? envelope.worktreeId.trim()
+        : undefined
+    const payload = normalizeAgentStatusPayload(envelope.payload)
+    if (!payload) {
       return
     }
     // Why: run the same warn-once diagnostics the HTTP path runs (cross-build
@@ -295,13 +316,11 @@ export class AgentHookServer {
       expectedEnv: this.env
     })
     const event: AgentHookEventPayload = {
-      paneKey: envelope.paneKey,
-      tabId: envelope.tabId,
-      worktreeId: envelope.worktreeId,
-      connectionId,
-      // Why: trust the relay-side normalization. The shared listener module
-      // already enforced the field-shape invariants on the remote.
-      payload: payload as AgentHookEventPayload['payload']
+      paneKey,
+      tabId,
+      worktreeId,
+      connectionId: trimmedConnectionId,
+      payload
     }
     const enriched = this.attachStatusTiming(event)
     this.state.lastStatusByPaneKey.set(event.paneKey, enriched)
