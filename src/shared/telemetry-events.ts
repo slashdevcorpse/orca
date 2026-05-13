@@ -174,7 +174,6 @@ export const SETTINGS_CHANGED_WHITELIST = [
   'openLinksInApp',
   'experimentalMobile',
   'experimentalPet',
-  'experimentalActivity',
   'experimentalWorktreeSymlinks',
   'geminiCliOAuthEnabled'
 ] as const satisfies readonly BooleanGlobalSettingsKey[]
@@ -277,6 +276,19 @@ const agentHookInstallFailedSchema = z
     agent: hookInstallAgentSchema,
     error_message: z.string().max(200)
   })
+  .strict()
+
+// Why: regression signal for paneKey attribution. A hook event whose paneKey
+// does not correspond to any tab in `tabsByWorktree` indicates the renderer
+// could not route the event to a pane. Pre-fix this fired routinely for
+// CLI-spawned terminals (empty paneKey); post-fix it should be near-zero in
+// normal use. The lone `reason` field reflects what the producer can observe
+// at emission time: an empty paneKey on the wire (pre-fix CLI shape) vs. any
+// non-empty paneKey that fails to resolve to a known tab in `tabsByWorktree`
+// (stale tab id, malformed value, or wrong-worktree id all bucket here).
+// See docs/cli-terminal-hook-pane-key.md.
+const agentHookUnattributedSchema = z
+  .object({ reason: z.enum(['empty_pane_key', 'unknown_tab_id']) })
   .strict()
 
 // ── Onboarding ──────────────────────────────────────────────────────────
@@ -529,6 +541,7 @@ export const eventSchemas = {
   agent_started: agentStartedSchema,
   agent_error: agentErrorSchema,
   agent_hook_install_failed: agentHookInstallFailedSchema,
+  agent_hook_unattributed: agentHookUnattributedSchema,
 
   settings_changed: settingsChangedSchema,
 

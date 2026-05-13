@@ -4,7 +4,6 @@ import TabBar from '@/components/tab-bar/TabBar'
 import TerminalPane from '@/components/terminal-pane/TerminalPane'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { FLOATING_TERMINAL_WORKTREE_ID } from '@/lib/floating-terminal'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import {
   ORCHESTRATION_SETUP_STATE_EVENT,
@@ -13,6 +12,7 @@ import {
   notifyOrchestrationSetupStateChanged
 } from '@/lib/orchestration-setup-state'
 import { useAppStore } from '@/store'
+import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import type { TerminalTab } from '../../../../shared/types'
 import { FloatingTerminalOrchestrationDialog } from './FloatingTerminalOrchestrationDialog'
 import { FloatingTerminalResizeHandles } from './FloatingTerminalResizeHandles'
@@ -330,14 +330,14 @@ export function FloatingTerminalPanel({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="Hide floating terminal"
+                  aria-label="Minimize floating terminal"
                   onClick={() => onOpenChange(false)}
                 >
                   <Minus className="size-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={6}>
-                Hide floating terminal
+                Minimize
               </TooltipContent>
             </Tooltip>
           </div>

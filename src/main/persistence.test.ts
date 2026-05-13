@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import type { Repo } from '../shared/types'
+import type { Repo, TerminalTab, WorkspaceSessionState } from '../shared/types'
 
 // Shared mutable state so the electron mock can reference a per-test directory
 const testState = { dir: '' }
@@ -61,6 +61,58 @@ const makeRepo = (overrides: Partial<Repo> = {}): Repo => ({
   ...overrides
 })
 
+const makeTerminalTab = (overrides: Partial<TerminalTab> = {}): TerminalTab => ({
+  id: 'tab1',
+  ptyId: 'pty1',
+  worktreeId: 'repo1::/worktree',
+  title: 'Terminal',
+  customTitle: null,
+  color: null,
+  sortOrder: 0,
+  createdAt: 1,
+  ...overrides
+})
+
+function makeSessionWithTerminalBuffers(): WorkspaceSessionState {
+  return {
+    activeRepoId: 'local-repo',
+    activeWorktreeId: 'local-repo::/local',
+    activeTabId: 'local-tab',
+    tabsByWorktree: {
+      'local-repo::/local': [
+        makeTerminalTab({
+          id: 'local-tab',
+          ptyId: 'local-pty',
+          worktreeId: 'local-repo::/local'
+        })
+      ],
+      'remote-repo::/remote': [
+        makeTerminalTab({
+          id: 'remote-tab',
+          ptyId: 'remote-pty',
+          worktreeId: 'remote-repo::/remote'
+        })
+      ]
+    },
+    terminalLayoutsByTabId: {
+      'local-tab': {
+        root: { type: 'leaf', leafId: 'leaf-local' },
+        activeLeafId: 'leaf-local',
+        expandedLeafId: null,
+        buffersByLeafId: { 'leaf-local': 'local-scrollback' },
+        ptyIdsByLeafId: { 'leaf-local': 'local-pty' }
+      },
+      'remote-tab': {
+        root: { type: 'leaf', leafId: 'leaf-remote' },
+        activeLeafId: 'leaf-remote',
+        expandedLeafId: null,
+        buffersByLeafId: { 'leaf-remote': 'remote-scrollback' },
+        ptyIdsByLeafId: { 'leaf-remote': 'remote-pty' }
+      }
+    }
+  }
+}
+
 describe('Store', () => {
   beforeEach(() => {
     testState.dir = mkdtempSync(join(tmpdir(), 'orca-test-'))
@@ -90,6 +142,9 @@ describe('Store', () => {
     expect(settings.terminalFontWeight).toBe(500)
     expect(settings.rightSidebarOpenByDefault).toBe(true)
     expect(settings.showTasksButton).toBe(true)
+    expect(settings.experimentalActivity).toBe(true)
+    expect(settings.floatingTerminalEnabled).toBe(true)
+    expect(settings.floatingTerminalDefaultedForAllUsers).toBe(true)
     expect(settings.notifications.customSoundPath).toBeNull()
   })
 
@@ -159,9 +214,45 @@ describe('Store', () => {
     expect(store.getSettings().refreshLocalBaseRefOnWorktreeCreate).toBe(false)
     expect(store.getSettings().rightSidebarOpenByDefault).toBe(true)
     expect(store.getSettings().showTasksButton).toBe(true)
+    expect(store.getSettings().experimentalActivity).toBe(true)
     expect(store.getSettings().notifications.customSoundPath).toBeNull()
     // repos should be loaded
     expect(store.getRepos()).toHaveLength(1)
+  })
+
+  it('migrates the legacy floating terminal disabled default to enabled', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { floatingTerminalEnabled: false },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().floatingTerminalEnabled).toBe(true)
+    expect(store.getSettings().floatingTerminalDefaultedForAllUsers).toBe(true)
+  })
+
+  it('preserves a post-migration floating terminal opt-out', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {
+        floatingTerminalEnabled: false,
+        floatingTerminalDefaultedForAllUsers: true
+      },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().floatingTerminalEnabled).toBe(false)
+    expect(store.getSettings().floatingTerminalDefaultedForAllUsers).toBe(true)
   })
 
   it('preserves custom notification sound paths from persisted settings', async () => {
@@ -666,6 +757,22 @@ describe('Store', () => {
     expect(store.getSettings().experimentalPet).toBe(true)
   })
 
+  it('promotes legacy experimentalActivity profiles to default-on', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { experimentalActivity: false },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+
+    expect(store.getSettings().experimentalActivity).toBe(true)
+  })
+
   // ── inline-agents card-property migration ──────────────────────────
   //
   // Why: 'inline-agents' was added to DEFAULT_WORKTREE_CARD_PROPERTIES after
@@ -860,6 +967,78 @@ describe('Store', () => {
     }
     store.setWorkspaceSession(session)
     expect(store.getWorkspaceSession()).toEqual(session)
+  })
+
+  it('strips local terminal scrollback buffers when setting workspace session', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ id: 'local-repo', connectionId: null }))
+    store.addRepo(makeRepo({ id: 'remote-repo', connectionId: 'ssh-target-1' }))
+
+    store.setWorkspaceSession(makeSessionWithTerminalBuffers())
+
+    const session = store.getWorkspaceSession()
+    expect(session.terminalLayoutsByTabId['local-tab'].buffersByLeafId).toBeUndefined()
+    expect(session.terminalLayoutsByTabId['local-tab'].ptyIdsByLeafId).toEqual({
+      'leaf-local': 'local-pty'
+    })
+    expect(session.terminalLayoutsByTabId['remote-tab'].buffersByLeafId).toEqual({
+      'leaf-remote': 'remote-scrollback'
+    })
+  })
+
+  it('keeps terminal scrollback buffers when the repo catalog is not hydrated yet', async () => {
+    const store = await createStore()
+
+    store.setWorkspaceSession({
+      activeRepoId: 'remote-repo',
+      activeWorktreeId: 'remote-repo::/remote',
+      activeTabId: 'remote-tab',
+      tabsByWorktree: {
+        'remote-repo::/remote': [
+          makeTerminalTab({
+            id: 'remote-tab',
+            ptyId: 'remote-pty',
+            worktreeId: 'remote-repo::/remote'
+          })
+        ]
+      },
+      terminalLayoutsByTabId: {
+        'remote-tab': {
+          root: { type: 'leaf', leafId: 'leaf-remote' },
+          activeLeafId: 'leaf-remote',
+          expandedLeafId: null,
+          buffersByLeafId: { 'leaf-remote': 'maybe-remote-scrollback' }
+        }
+      }
+    })
+
+    expect(
+      store.getWorkspaceSession().terminalLayoutsByTabId['remote-tab'].buffersByLeafId
+    ).toEqual({
+      'leaf-remote': 'maybe-remote-scrollback'
+    })
+  })
+
+  it('strips legacy local terminal scrollback buffers when loading workspace session', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({ id: 'local-repo', connectionId: null }),
+        makeRepo({ id: 'remote-repo', connectionId: 'ssh-target-1' })
+      ],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: makeSessionWithTerminalBuffers()
+    })
+
+    const store = await createStore()
+    const session = store.getWorkspaceSession()
+    expect(session.terminalLayoutsByTabId['local-tab'].buffersByLeafId).toBeUndefined()
+    expect(session.terminalLayoutsByTabId['remote-tab'].buffersByLeafId).toEqual({
+      'leaf-remote': 'remote-scrollback'
+    })
   })
 
   it('does not restore cleared SSH bindings after a lease expired', async () => {

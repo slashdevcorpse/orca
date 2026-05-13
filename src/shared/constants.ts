@@ -100,6 +100,10 @@ export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
  *  the collector and the status-bar popover agree on the sentinel. */
 export const ORPHAN_WORKTREE_ID = '__orphan__'
 
+// Why: the floating terminal is a local synthetic workspace, so persistence
+// pruning must classify it without consulting the repo catalog.
+export const FLOATING_TERMINAL_WORKTREE_ID = 'global-floating-terminal'
+
 export const REPO_COLORS = [
   '#737373', // neutral
   '#ef4444', // red
@@ -203,6 +207,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     showTitlebarAppName: true,
     showTasksButton: true,
     floatingTerminalEnabled: true,
+    floatingTerminalDefaultedForAllUsers: true,
     floatingTerminalCwd: '~',
     floatingTerminalTriggerLocation: 'floating-button',
     notifications: getDefaultNotificationSettings(),
@@ -240,7 +245,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     // Why: off by default — opt-in cosmetic joke feature. Leaving the default
     // false keeps the overlay unmounted for users who never enable it.
     experimentalPet: false,
-    experimentalActivity: false,
+    experimentalActivity: true,
     experimentalWorktreeSymlinks: false,
     // Why: hydrate an empty default so the renderer's optional-chained reads
     // (`settings?.githubProjects?.activeProject`) land on a stable shape
