@@ -21,7 +21,7 @@ import {
   type TestInfo
 } from '@stablyai/playwright-test'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { execSync } from 'child_process'
+import { execSync, type ChildProcess } from 'child_process'
 import os from 'os'
 import path from 'path'
 import { TEST_REPO_PATH_FILE } from '../global-setup'
@@ -118,6 +118,20 @@ function createSeededTestRepo(): string {
 
   writeFileSync(TEST_REPO_PATH_FILE, testRepoDir)
   return testRepoDir
+}
+
+function waitForProcessExit(childProcess: ChildProcess | null, timeoutMs: number): Promise<void> {
+  if (!childProcess || childProcess.exitCode !== null || childProcess.signalCode !== null) {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, timeoutMs)
+    childProcess.once('exit', () => {
+      clearTimeout(timeout)
+      resolve()
+    })
+  })
 }
 
 /**
@@ -224,9 +238,10 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
     // it 10s for a clean exit, then SIGKILL the process tree immediately.
     // SIGTERM doesn't reliably stop the Electron process tree on macOS.
     const appProcess = app.process()
+    const closePromise = app.close().catch(() => undefined)
     try {
       await Promise.race([
-        app.close(),
+        closePromise,
         new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('Timed out closing Electron app')), 10_000)
         })
@@ -239,6 +254,10 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
           /* already dead */
         }
       }
+      // Why: if app.close() hangs, leaving its Playwright connection promise
+      // unresolved keeps the worker process alive until Playwright's teardown
+      // watchdog fires. Wait briefly for the forced process exit to settle it.
+      await Promise.race([closePromise, waitForProcessExit(appProcess, 5_000)])
     }
     rmSync(userDataDir, { recursive: true, force: true })
   },
