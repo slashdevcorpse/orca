@@ -157,6 +157,8 @@ vi.mock('./updater-prerelease-feed', () => ({
 
 describe('updater', () => {
   beforeEach(() => {
+    delete process.env.ORCA_DISTRIBUTION
+    delete process.env.LEAFFISH_UPDATE_FEED_URL
     vi.resetModules()
     autoUpdaterMock.reset()
     nativeUpdaterMock.on.mockReset()
@@ -193,6 +195,42 @@ describe('updater', () => {
     expect(autoUpdaterMock.setFeedURL).not.toHaveBeenCalled()
     expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
     expect(powerMonitorOnMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps Leaffish updates disabled without a fork-owned feed', async () => {
+    process.env.ORCA_DISTRIBUTION = 'leaffish'
+    const send = vi.fn()
+    const { setupAutoUpdater, checkForUpdatesFromMenu } = await import('./updater')
+
+    setupAutoUpdater({ webContents: { send } } as never)
+    checkForUpdatesFromMenu()
+
+    expect(autoUpdaterMock.setFeedURL).not.toHaveBeenCalled()
+    expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith('updater:status', { state: 'not-available' })
+    expect(send).toHaveBeenCalledWith('updater:status', {
+      state: 'not-available',
+      userInitiated: true
+    })
+  })
+
+  it('uses only the configured HTTPS Leaffish update feed', async () => {
+    process.env.ORCA_DISTRIBUTION = 'leaffish'
+    process.env.LEAFFISH_UPDATE_FEED_URL = 'https://updates.example.com/leaffish/'
+    const { setupAutoUpdater, checkForUpdatesFromMenu } = await import('./updater')
+
+    setupAutoUpdater({ webContents: { send: vi.fn() } } as never, {
+      getLastUpdateCheckAt: () => Date.now()
+    })
+    checkForUpdatesFromMenu()
+    await vi.waitFor(() => expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1))
+
+    expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
+      provider: 'generic',
+      url: 'https://updates.example.com/leaffish'
+    })
+    expect(fetchNewerReleaseTagsMock).not.toHaveBeenCalled()
+    expect(fetchNudgeMock).not.toHaveBeenCalled()
   })
 
   it('deduplicates identical check errors from the event and rejected promise', async () => {

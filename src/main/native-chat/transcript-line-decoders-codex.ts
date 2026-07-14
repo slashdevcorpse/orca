@@ -62,10 +62,18 @@ function codexResponseItem(
   }
   if (payload.type === 'function_call' || payload.type === 'local_shell_call') {
     const name = extractString(payload.name) ?? 'tool'
+    const callId = extractString(payload.call_id)
     return {
       id,
       role: 'assistant',
-      blocks: [{ type: 'tool-call', name, input: codexCallInput(payload) }],
+      blocks: [
+        {
+          type: 'tool-call',
+          name,
+          input: codexCallInput(payload),
+          ...(callId ? { callId } : {})
+        }
+      ],
       timestamp,
       source: 'transcript'
     }
@@ -74,7 +82,7 @@ function codexResponseItem(
     return {
       id,
       role: 'tool',
-      blocks: [codexToolResult(payload.output)],
+      blocks: [codexToolResult(payload.output, extractString(payload.call_id))],
       timestamp,
       source: 'transcript'
     }
@@ -109,13 +117,14 @@ function codexCallInput(payload: Record<string, unknown>): unknown {
   return payload.input ?? payload.action ?? null
 }
 
-function codexToolResult(output: unknown): NativeChatBlock {
+function codexToolResult(output: unknown, callId: string | null): NativeChatBlock {
   const record = asRecord(output)
   const isError = record?.success === false || record?.is_error === true
   return {
     type: 'tool-result',
     output: toolResultOutput(record?.content ?? record?.output ?? output),
-    ...(isError ? { isError: true } : {})
+    ...(isError ? { isError: true } : {}),
+    ...(callId ? { callId } : {})
   }
 }
 

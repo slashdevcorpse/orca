@@ -15,6 +15,7 @@ import {
   getRemoteLinearHelp,
   tryDispatchRemoteLinearCli
 } from './ssh-remote-linear-cli'
+import { getAppDistributionDefinition } from '../../shared/app-distribution'
 
 export type { RemoteOrcaCliRequest, RemoteOrcaCliResult } from './ssh-remote-cli-host-passthrough'
 
@@ -26,13 +27,11 @@ type ParsedRemoteCli = {
 // Why: these commands run a foreground/interactive process attached to the
 // caller's TTY (or a local tmux pane), which a buffered one-shot relay bridge
 // cannot host. Everything else routes through the full host CLI.
+const APP_DEFINITION = getAppDistributionDefinition()
 const HOST_INTERACTIVE_COMMANDS: Record<string, string> = {
-  serve:
-    'orca serve starts a foreground headless Orca server and cannot run through the SSH relay bridge. Run it directly on the machine that should host Orca.',
-  'claude-teams':
-    'orca claude-teams starts an interactive Claude Code session and cannot run through the SSH relay bridge. Run it in a terminal on the Orca host machine.',
-  'agent-teams-tmux':
-    'orca agent-teams-tmux is a tmux pane shim for the Orca host machine and cannot run through the SSH relay bridge.'
+  serve: `${APP_DEFINITION.cliCommandName} serve starts a foreground headless ${APP_DEFINITION.name} server and cannot run through the SSH relay bridge. Run it directly on the machine that should host ${APP_DEFINITION.name}.`,
+  'claude-teams': `${APP_DEFINITION.cliCommandName} claude-teams starts an interactive Claude Code session and cannot run through the SSH relay bridge. Run it in a terminal on the ${APP_DEFINITION.name} host machine.`,
+  'agent-teams-tmux': `${APP_DEFINITION.cliCommandName} agent-teams-tmux is a tmux pane shim for the ${APP_DEFINITION.name} host machine and cannot run through the SSH relay bridge.`
 }
 
 const REMOTE_BOOLEAN_FLAGS = new Set([
@@ -86,7 +85,20 @@ export async function runRemoteOrcaCli(
     // bundled CLI entry cannot be launched on this install.
     passthroughFailure = err
   }
-  return await runLegacyRemoteOrcaCli(runtime, request, parsed, json, passthroughFailure)
+  return localizeLegacyResult(
+    await runLegacyRemoteOrcaCli(runtime, request, parsed, json, passthroughFailure)
+  )
+}
+
+function localizeLegacyResult(result: RemoteOrcaCliResult): RemoteOrcaCliResult {
+  if (APP_DEFINITION.cliCommandName === 'orca') {
+    return result
+  }
+  const localize = (value: string): string =>
+    value
+      .replaceAll('Orca', APP_DEFINITION.name)
+      .replace(/\borca(?=[\s`])/g, APP_DEFINITION.cliCommandName)
+  return { ...result, stdout: localize(result.stdout), stderr: localize(result.stderr) }
 }
 
 async function runLegacyRemoteOrcaCli(
@@ -211,7 +223,7 @@ async function dispatchRemoteCli(
       // include that root cause so users can fix the install instead of
       // assuming the command family is unsupported over SSH.
       throw new Error(
-        `Unsupported SSH Orca CLI command: ${command} (full Orca CLI bridge unavailable: ${passthroughFailureReason})`
+        `Unsupported SSH ${APP_DEFINITION.name} CLI command: ${command} (full ${APP_DEFINITION.name} CLI bridge unavailable: ${passthroughFailureReason})`
       )
   }
 }

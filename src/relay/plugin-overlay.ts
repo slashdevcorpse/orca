@@ -23,6 +23,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -31,8 +32,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mirrorEntry, safeRemoveOverlay } from '../main/pty/overlay-mirror'
 import type { PiAgentKind } from '../shared/pi-agent-kind'
+import { getAppDistributionDefinition } from '../shared/app-distribution'
+import {
+  getSharedPiStatusBridgeDecision,
+  withSharedPiStatusBridgeMarker
+} from '../shared/pi-status-extension-bridge'
 
-const RELAY_HOOKS_DIR = '.orca-relay'
+const RELAY_HOOKS_DIR = getAppDistributionDefinition().hostNamespaces.relayRuntimeDirectoryName
 const OPENCODE_OVERLAY_SUBDIR = 'opencode-overlays'
 const PI_OVERLAY_SUBDIR_BY_KIND: Record<PiAgentKind, string> = {
   pi: 'pi-overlays',
@@ -41,13 +47,6 @@ const PI_OVERLAY_SUBDIR_BY_KIND: Record<PiAgentKind, string> = {
 const OPENCODE_PLUGIN_FILE = 'orca-opencode-status.js'
 const PI_EXTENSION_FILE = 'orca-agent-status.ts'
 const PI_AGENT_SUBDIR = 'agent'
-const ORCA_MANAGED_EXTENSION_MARKER = '@orca-managed-pi-extension'
-
-function withOrcaManagedPiExtensionMarker(source: string): string {
-  return source.includes(ORCA_MANAGED_EXTENSION_MARKER)
-    ? source
-    : `// ${ORCA_MANAGED_EXTENSION_MARKER}\n${source}`
-}
 // Why: source-dir resolution is keyed off the launching agent (Pi or OMP).
 // Both consume `PI_CODING_AGENT_DIR` but default to different `~/.<kind>/agent`
 // paths on the remote disk. The renderer-chosen launch command flows in via
@@ -115,10 +114,10 @@ export class PluginOverlayManager {
       this.opencodePluginSource = sources.opencodePluginSource
     }
     if (typeof sources.piExtensionSource === 'string') {
-      this.piExtensionSources.pi = withOrcaManagedPiExtensionMarker(sources.piExtensionSource)
+      this.piExtensionSources.pi = withSharedPiStatusBridgeMarker(sources.piExtensionSource)
     }
     if (typeof sources.ompExtensionSource === 'string') {
-      this.piExtensionSources.omp = withOrcaManagedPiExtensionMarker(sources.ompExtensionSource)
+      this.piExtensionSources.omp = withSharedPiStatusBridgeMarker(sources.ompExtensionSource)
     }
   }
 
@@ -222,11 +221,29 @@ export class PluginOverlayManager {
     return join(this.homeDir, PI_AGENT_HOME_DIR_NAME[kind], PI_AGENT_SUBDIR)
   }
 
-  private canOverwritePiExtension(path: string): boolean {
+  private getManagedPiExtensionDecision(
+    path: string
+  ): ReturnType<typeof getSharedPiStatusBridgeDecision> {
     try {
-      return readFileSync(path, 'utf8').includes(ORCA_MANAGED_EXTENSION_MARKER)
+      return getSharedPiStatusBridgeDecision(readFileSync(path, 'utf8'))
     } catch {
-      return true
+      return getSharedPiStatusBridgeDecision(null)
+    }
+  }
+
+  private writePiExtensionAtomically(path: string, source: string): void {
+    const temporaryPath = `${path}.${process.pid}.${safeDirName(source).slice(0, 8)}.tmp`
+    try {
+      writeFileSync(temporaryPath, source)
+      // Why: two distributions may prepare Pi concurrently; rename keeps the
+      // single shared extension readable as either complete revision, never a partial write.
+      renameSync(temporaryPath, path)
+    } finally {
+      try {
+        unlinkSync(temporaryPath)
+      } catch {
+        // Renamed successfully or best-effort cleanup after a failed replacement.
+      }
     }
   }
 
@@ -246,10 +263,13 @@ export class PluginOverlayManager {
       const extensionsDir = join(sourceAgentDir, 'extensions')
       mkdirSync(extensionsDir, { recursive: true })
       const extensionPath = join(extensionsDir, PI_EXTENSION_FILE)
-      if (!this.canOverwritePiExtension(extensionPath)) {
+      const decision = this.getManagedPiExtensionDecision(extensionPath)
+      if (decision === 'user-owned') {
         return null
       }
-      writeFileSync(extensionPath, extensionSource)
+      if (decision === 'replace') {
+        this.writePiExtensionAtomically(extensionPath, extensionSource)
+      }
       return sourceAgentDir
     } catch (err) {
       process.stderr.write(

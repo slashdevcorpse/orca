@@ -3,11 +3,13 @@
 // See design-ssh-support.md § JSON-RPC Protocol Specification.
 
 import { DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../../shared/ssh-types'
+import { getAppDistributionDefinition } from '../../shared/app-distribution'
 
 export const RELAY_VERSION = '0.1.0'
-export const RELAY_SENTINEL = `ORCA-RELAY v${RELAY_VERSION} READY\n`
+const HOST_NAMESPACES = getAppDistributionDefinition().hostNamespaces
+export const RELAY_SENTINEL = `${HOST_NAMESPACES.sshRelaySentinelName} v${RELAY_VERSION} READY\n`
 export const RELAY_SENTINEL_TIMEOUT_MS = 10_000
-export const RELAY_REMOTE_DIR = '.orca-remote'
+export const RELAY_REMOTE_DIR = HOST_NAMESPACES.sshRelayInstallDirectoryName
 
 // ── Framing constants (VS Code ProtocolConstants) ───────────────────
 

@@ -5,7 +5,7 @@ import type { TuiAgent } from '../../../../shared/types'
 import type { NativeChatSession } from '../../../../shared/native-chat-types'
 import { useNativeChatLiveSession } from './use-native-chat-live-session'
 import { selectNativeChatViewState } from './native-chat-view-state'
-import { NativeChatMessageList } from './NativeChatMessageList'
+import { PersistentNativeChatMessageList } from './PersistentNativeChatMessageList'
 import { NativeChatComposer, type NativeChatComposerHandle } from './NativeChatComposer'
 import { useNativeChatFontScale } from './use-native-chat-font-scale'
 import { useNativeChatCanSend } from './use-native-chat-can-send'
@@ -360,6 +360,21 @@ function NativeChatResolvedView({
     [fileLinkContext]
   )
   const nativeChatFileLinkClick = fileLinkContext ? openNativeChatFileLink : undefined
+  const openNativeChatTranscriptFile = useCallback(
+    (displayPath: string) => {
+      const target = resolveNativeChatFileLink(displayPath, fileLinkContext)
+      if (!target || !fileLinkContext) {
+        return
+      }
+      openDetectedFilePath(target.absolutePath, target.line, target.column, {
+        worktreeId: fileLinkContext.worktreeId,
+        worktreePath: fileLinkContext.worktreePath,
+        runtimeEnvironmentId: fileLinkContext.runtimeEnvironmentId,
+        openWithSystemDefault: false
+      })
+    },
+    [fileLinkContext]
+  )
 
   // Chat-only font zoom via Cmd/Ctrl +/-/0, gated to the live conversation so
   // the chord is inert on the loading/empty/error states and elsewhere.
@@ -410,13 +425,14 @@ function NativeChatResolvedView({
         ) : viewState.kind === 'empty' ? (
           <NativeChatEmptyState kind="empty" agent={agent} />
         ) : (
-          <NativeChatMessageList
+          <PersistentNativeChatMessageList
             session={sessionWithPending}
             isWorking={isWorking}
             expandSignal={false}
             fontScale={fontScale.scale}
             onLinkClick={nativeChatFileLinkClick}
             allowFileUriLinks={fileLinkContext !== null}
+            onOpenFile={fileLinkContext ? openNativeChatTranscriptFile : undefined}
             failedDeliveryMessageIds={failedLaunchPromptMessageIds}
           />
         )}

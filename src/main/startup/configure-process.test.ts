@@ -150,6 +150,18 @@ describe('configureDevUserDataPath', () => {
 
     expect(app.setPath).not.toHaveBeenCalled()
   })
+
+  it('isolates packaged Leaffish user and session data', async () => {
+    const { app } = await import('electron')
+    const { configureDevUserDataPath } = await import('./configure-process')
+
+    vi.mocked(app.setPath).mockClear()
+    configureDevUserDataPath(false, 'leaffish')
+
+    const userDataPath = join('/tmp/app-data', 'leaffish')
+    expect(app.setPath).toHaveBeenCalledWith('userData', userDataPath)
+    expect(app.setPath).toHaveBeenCalledWith('sessionData', join(userDataPath, 'session-data'))
+  })
 })
 
 describe('configureOrcaUserDataPathEnv', () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -19,6 +19,11 @@ import {
 } from '../pty/overlay-mirror'
 import { migrateLegacyOmpOverlayState } from './legacy-omp-overlay-migration'
 import type { PiAgentKind } from '../../shared/pi-agent-kind'
+import {
+  getSharedPiStatusBridgeDecision,
+  ORCA_MANAGED_PI_EXTENSION_MARKER,
+  withSharedPiStatusBridgeMarker
+} from '../../shared/pi-status-extension-bridge'
 
 // Why: the Pi test suite imports `isSafeDescendCandidate` from this module's
 // public surface to lock in the Windows-junction ordering invariant against
@@ -27,7 +32,6 @@ import type { PiAgentKind } from '../../shared/pi-agent-kind'
 export const isSafeDescendCandidate = sharedIsSafeDescendCandidate
 
 const PI_AGENT_SUBDIR = 'agent'
-const ORCA_MANAGED_EXTENSION_MARKER = '@orca-managed-pi-extension'
 const OMP_MANAGED_STATUS_EXTENSION_DIR = 'omp-managed-status-extension'
 
 type ManagedExtensionWriteResult = 'written' | 'skipped-user-owned' | 'failed'
@@ -65,9 +69,9 @@ function toSafeOverlayDirName(ptyId: string): string {
 }
 
 function withOrcaManagedExtensionMarker(source: string): string {
-  return source.includes(ORCA_MANAGED_EXTENSION_MARKER)
+  return source.includes(ORCA_MANAGED_PI_EXTENSION_MARKER)
     ? source
-    : `// ${ORCA_MANAGED_EXTENSION_MARKER}\n${source}`
+    : `// ${ORCA_MANAGED_PI_EXTENSION_MARKER}\n${source}`
 }
 
 export class PiTitlebarExtensionService {
@@ -100,7 +104,7 @@ export class PiTitlebarExtensionService {
 
   private canOverwriteManagedExtension(path: string): boolean {
     try {
-      return readFileSync(path, 'utf8').includes(ORCA_MANAGED_EXTENSION_MARKER)
+      return readFileSync(path, 'utf8').includes(ORCA_MANAGED_PI_EXTENSION_MARKER)
     } catch {
       return true
     }
@@ -119,6 +123,39 @@ export class PiTitlebarExtensionService {
     }
   }
 
+  private writeSharedStatusExtension(path: string, source: string): ManagedExtensionWriteResult {
+    let existingSource: string | null = null
+    try {
+      existingSource = readFileSync(path, 'utf8')
+    } catch {
+      existingSource = null
+    }
+    const decision = getSharedPiStatusBridgeDecision(existingSource)
+    if (decision === 'user-owned') {
+      return 'skipped-user-owned'
+    }
+    if (decision === 'reuse') {
+      return 'written'
+    }
+
+    const temporaryPath = `${path}.${process.pid}.${createHash('sha256').update(source).digest('hex').slice(0, 8)}.tmp`
+    try {
+      writeFileSync(temporaryPath, source)
+      // Why: local and relay writers may prepare Pi concurrently; rename keeps
+      // their one shared bridge readable as a complete compatible revision.
+      renameSync(temporaryPath, path)
+      return 'written'
+    } catch {
+      return 'failed'
+    } finally {
+      try {
+        unlinkSync(temporaryPath)
+      } catch {
+        // Renamed successfully or best-effort cleanup after a failed replacement.
+      }
+    }
+  }
+
   private writeOmpFallbackStatusExtension(source: string): string | undefined {
     const fallbackDir = join(app.getPath('userData'), OMP_MANAGED_STATUS_EXTENSION_DIR)
     try {
@@ -128,7 +165,9 @@ export class PiTitlebarExtensionService {
     }
 
     const fallbackPath = join(fallbackDir, ORCA_PI_AGENT_STATUS_EXTENSION_FILE)
-    return this.writeManagedExtension(fallbackPath, source) === 'written' ? fallbackPath : undefined
+    return this.writeSharedStatusExtension(fallbackPath, source) === 'written'
+      ? fallbackPath
+      : undefined
   }
 
   private installManagedExtensions(
@@ -151,8 +190,8 @@ export class PiTitlebarExtensionService {
       withOrcaManagedExtensionMarker(getPiPrefillExtensionSource(kind))
     )
     const statusExtensionPath = join(extensionsDir, ORCA_PI_AGENT_STATUS_EXTENSION_FILE)
-    const statusSource = withOrcaManagedExtensionMarker(getPiAgentStatusExtensionSource(kind))
-    const statusResult = this.writeManagedExtension(statusExtensionPath, statusSource)
+    const statusSource = withSharedPiStatusBridgeMarker(getPiAgentStatusExtensionSource(kind))
+    const statusResult = this.writeSharedStatusExtension(statusExtensionPath, statusSource)
 
     return {
       extensionDir: extensionsDir,

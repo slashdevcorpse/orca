@@ -9,6 +9,13 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { getCanonicalUserDataPath } from '../persistence'
+import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution
+} from '../../shared/app-distribution'
+
+const APP_DEFINITION = getAppDistributionDefinition()
 
 export type RemoteOrcaCliRequest = {
   argv: string[]
@@ -84,6 +91,7 @@ export function buildHostCliEnv(args: {
   remoteEnv: Record<string, string>
   userDataPath: string
   remoteCwd: string
+  appDistribution?: AppDistribution
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...args.hostEnv }
   for (const key of REMOTE_CONTEXT_ENV_VARS) {
@@ -95,6 +103,9 @@ export function buildHostCliEnv(args: {
   // Why: bind the subprocess to this app instance's runtime metadata (dev and
   // parallel instances use non-default userData dirs).
   env.ORCA_USER_DATA_PATH = args.userDataPath
+  // Why: the CLI bundle is built outside electron-vite, so a packaged
+  // Leaffish host must explicitly carry its embedded distribution identity.
+  env.ORCA_DISTRIBUTION = args.appDistribution ?? APP_DISTRIBUTION
   // Why: the caller's working directory lives on the remote machine, so the
   // subprocess cwd cannot be chdir'd there; ORCA_CLI_CWD carries it for
   // cwd-based selectors like `--worktree active`.
@@ -143,7 +154,9 @@ export async function runHostOrcaCliPassthrough(
   const killTimeoutMs = options.killTimeoutMs ?? resolveHostCliKillTimeoutMs(request.argv)
 
   if (!entryExists(cliEntryPath)) {
-    throw new HostCliUnavailableError(`Orca CLI entry not found at ${cliEntryPath}`)
+    throw new HostCliUnavailableError(
+      `${APP_DEFINITION.name} CLI entry not found at ${cliEntryPath}`
+    )
   }
 
   const env = buildHostCliEnv({
@@ -176,7 +189,7 @@ export async function runHostOrcaCliPassthrough(
       }
       resolve({
         stdout: stdout.toString(),
-        stderr: `${stderr.toString()}Orca CLI bridge timed out after ${killTimeoutMs}ms on the host.\n`,
+        stderr: `${stderr.toString()}${APP_DEFINITION.name} CLI bridge timed out after ${killTimeoutMs}ms on the host.\n`,
         exitCode: 1
       })
     }, killTimeoutMs)
@@ -192,7 +205,9 @@ export async function runHostOrcaCliPassthrough(
       // runnable at all — signal the caller to use the legacy fallback rather
       // than reporting a confusing per-command failure.
       reject(
-        new HostCliUnavailableError(`Failed to launch the Orca CLI on the host: ${err.message}`)
+        new HostCliUnavailableError(
+          `Failed to launch the ${APP_DEFINITION.name} CLI on the host: ${err.message}`
+        )
       )
     })
 
@@ -249,7 +264,9 @@ class CappedOutputCollector {
 
   toString(): string {
     const text = Buffer.concat(this.chunks).toString('utf8')
-    return this.truncated ? `${text}\n[orca ssh cli] output truncated\n` : text
+    return this.truncated
+      ? `${text}\n[${APP_DEFINITION.cliCommandName} ssh cli] output truncated\n`
+      : text
   }
 }
 

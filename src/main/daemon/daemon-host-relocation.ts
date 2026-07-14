@@ -12,6 +12,7 @@ import {
 import { dirname, join, win32 as winPath } from 'node:path'
 import { app } from 'electron'
 import { parseDaemonPidFile, startTimeMatches } from './daemon-health'
+import { getAppDistributionDefinition } from '../../shared/app-distribution'
 
 /**
  * Relocates the terminal daemon's process image out of the app install
@@ -52,13 +53,14 @@ const MARKER_NAME = '.materialized.json'
 // name is shared verbatim with the NSIS uninstall cleanup
 // (config/nsis/daemon-host-uninstall.nsh), which removes
 // %LOCALAPPDATA%\<LOCAL_HOST_ROOT_NAME>\daemon-host — keep the two in sync.
-const LOCAL_HOST_ROOT_NAME = 'Orca'
+const distribution = getAppDistributionDefinition()
+const LOCAL_HOST_ROOT_NAME = distribution.localDataDirectoryName
 
 // The relocated host exe is a copy of Orca.exe renamed to a distinct image
 // name. The NSIS updater's name-based kill (`taskkill /IM Orca.exe`) matches by
 // image name, so a distinct name spares the daemon from that branch, while the
 // userData path (outside $INSTDIR) spares it from the path-based branch.
-const DAEMON_HOST_EXE_NAME = 'orca-terminal-daemon.exe'
+const DAEMON_HOST_EXE_NAME = distribution.daemonHostExecutableName
 
 // V8 snapshots + ICU data the Electron bootstrap reads even under
 // ELECTRON_RUN_AS_NODE; siblings of Orca.exe in win-unpacked.

@@ -17,6 +17,7 @@ const __dirname = import.meta.dirname
 // Why: the script lives under config/scripts, so go two levels up to reach the repo root.
 const ROOT = join(__dirname, '..', '..')
 const RELAY_ENTRY = join(ROOT, 'src', 'relay', 'relay.ts')
+const APP_DISTRIBUTION = process.env.ORCA_DISTRIBUTION === 'leaffish' ? 'leaffish' : 'orca'
 
 const PLATFORMS = [
   'linux-x64',
@@ -46,7 +47,10 @@ for (const platform of PLATFORMS) {
     sourcemap: false,
     minify: true,
     define: {
-      'process.env.NODE_ENV': '"production"'
+      'process.env.NODE_ENV': '"production"',
+      // Why: remote hosts do not inherit the desktop process environment;
+      // embed the namespace so the deployed relay matches its packaged app.
+      'globalThis.ORCA_APP_DISTRIBUTION': JSON.stringify(APP_DISTRIBUTION)
     }
   })
 
@@ -77,7 +81,8 @@ for (const platform of PLATFORMS) {
     sourcemap: false,
     minify: true,
     define: {
-      'process.env.NODE_ENV': '"production"'
+      'process.env.NODE_ENV': '"production"',
+      'globalThis.ORCA_APP_DISTRIBUTION': JSON.stringify(APP_DISTRIBUTION)
     }
   })
   const content = readFileSync(join(outDir, 'wsl-agent-hook-relay.js'))

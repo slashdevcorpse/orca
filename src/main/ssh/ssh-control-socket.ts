@@ -3,6 +3,11 @@ import { lstatSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join as pathJoin } from 'node:path'
 import type { SshTarget } from '../../shared/ssh-types'
+import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution
+} from '../../shared/app-distribution'
 import type { SshResolvedConfig } from './ssh-config-parser'
 
 export type SystemSshResolvedConfig = Pick<
@@ -28,7 +33,8 @@ const CONTROL_SOCKET_PATH_MAX_LENGTH = UNIX_SOCKET_PATH_LIMIT - OPENSSH_CONTROL_
 
 export function getControlSocketPath(
   target: SshTarget,
-  resolvedConfig?: SystemSshResolvedConfig | null
+  resolvedConfig?: SystemSshResolvedConfig | null,
+  appDistribution: AppDistribution = APP_DISTRIBUTION
 ): string | null {
   if (process.platform === 'win32') {
     return null
@@ -38,7 +44,10 @@ export function getControlSocketPath(
     return null
   }
 
-  const dir = findControlSocketDirectory(uid)
+  const dir = findControlSocketDirectory(
+    uid,
+    getAppDistributionDefinition(appDistribution).hostNamespaces.sshControlSocketDirectoryName
+  )
   if (!dir) {
     return null
   }
@@ -73,8 +82,8 @@ export function removeControlSocketPath(socketPath: string): void {
   }
 }
 
-function findControlSocketDirectory(uid: number): string | null {
-  const candidates = getControlSocketDirectoryCandidates(uid)
+function findControlSocketDirectory(uid: number, directoryName: string): string | null {
+  const candidates = getControlSocketDirectoryCandidates(uid, directoryName)
   for (const dir of candidates) {
     if (ensurePrivateDirectory(dir, uid)) {
       return dir
@@ -83,13 +92,13 @@ function findControlSocketDirectory(uid: number): string | null {
   return null
 }
 
-function getControlSocketDirectoryCandidates(uid: number): string[] {
+function getControlSocketDirectoryCandidates(uid: number, directoryName: string): string[] {
   const candidates: string[] = []
   const xdgRuntimeDir = process.env.XDG_RUNTIME_DIR
   if (xdgRuntimeDir && isAbsolute(xdgRuntimeDir)) {
-    candidates.push(pathJoin(xdgRuntimeDir, 'orca-ssh'))
+    candidates.push(pathJoin(xdgRuntimeDir, directoryName))
   }
-  candidates.push(pathJoin(tmpdir(), `orca-ssh-${uid}`))
+  candidates.push(pathJoin(tmpdir(), `${directoryName}-${uid}`))
   return candidates
 }
 

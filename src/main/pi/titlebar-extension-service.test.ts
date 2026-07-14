@@ -145,6 +145,7 @@ describe('PiTitlebarExtensionService', () => {
       'utf-8'
     )
     expect(statusExtensionSource).toContain('@orca-managed-pi-extension')
+    expect(statusExtensionSource).toContain('@orca-shared-pi-status-bridge protocol=1 revision=1')
     expect(statusExtensionSource).toContain('/hook/pi')
     expect(statusExtensionSource).toContain('process.title')
     expect(statusExtensionSource).toContain("return '/hook/omp'")
@@ -462,6 +463,25 @@ describe('PiTitlebarExtensionService', () => {
     expect(readFileSync(join(piHome, 'auth.json'), 'utf-8')).toBe('rotated token')
     expect(readFileSync(join(piHome, 'extensions', 'new-ext', 'ext.ts'), 'utf-8')).toBe(
       'new user extension'
+    )
+  })
+
+  it('reuses a compatible status bridge prepared by the other distribution', () => {
+    const sharedStatusPath = join(piHome, 'extensions', 'orca-agent-status.ts')
+    const sharedSource = [
+      '// @orca-shared-pi-status-bridge protocol=1 revision=1',
+      '// @orca-managed-pi-extension',
+      '// compatible bridge prepared by Leaffish'
+    ].join('\n')
+    writeFileSync(sharedStatusPath, sharedSource)
+
+    const svc = new PiTitlebarExtensionService()
+    const env = svc.buildPtyEnv('pty-shared-distribution', piHome, 'pi')
+
+    expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBe(piHome)
+    expect(readFileSync(sharedStatusPath, 'utf-8')).toBe(sharedSource)
+    expect(readdirSync(join(piHome, 'extensions')).some((entry) => entry.endsWith('.tmp'))).toBe(
+      false
     )
   })
 

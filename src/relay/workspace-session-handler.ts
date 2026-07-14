@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { RelayDispatcher } from './dispatcher'
+import { getAppDistributionDefinition } from '../shared/app-distribution'
 
 type RemoteWorkspaceSnapshot = {
   namespace: string
@@ -28,6 +29,8 @@ type PatchResult =
 
 const SNAPSHOT_SCHEMA_VERSION = 1
 const PRESENCE_TTL_MS = 45_000
+const MANAGED_HOME_DIRECTORY_NAME =
+  getAppDistributionDefinition().hostNamespaces.managedHomeDirectoryName
 
 function emptySession(): Record<string, unknown> {
   return {
@@ -57,7 +60,7 @@ export class WorkspaceSessionHandler {
 
   constructor(
     private dispatcher: RelayDispatcher,
-    private baseDir = join(homedir(), '.orca', 'sessions')
+    private baseDir = join(homedir(), MANAGED_HOME_DIRECTORY_NAME, 'sessions')
   ) {
     this.dispatcher.onRequest('workspace.get', (params) => this.get(params))
     this.dispatcher.onRequest('workspace.patch', (params) => this.patch(params))

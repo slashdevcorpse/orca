@@ -1199,6 +1199,41 @@ describe('CliInstaller', () => {
     )
   })
 
+  it('uses a separate packaged Windows command for Leaffish', async () => {
+    const fixture = await makeFixture()
+    const localAppDataPath = fixture.root
+    const resourcesPath = join(fixture.root, 'resources')
+    await mkdir(join(resourcesPath, 'bin'), { recursive: true })
+    await writeFile(join(resourcesPath, 'bin', 'leaffish.exe'), 'native launcher', 'utf8')
+
+    const installer = new CliInstaller({
+      appDistribution: 'leaffish',
+      platform: 'win32',
+      isPackaged: true,
+      resourcesPath,
+      localAppDataPath,
+      userDataPath: fixture.userDataPath,
+      execPath: join(localAppDataPath, 'Programs', 'Leaffish', 'Leaffish.exe'),
+      appPath: fixture.appPath,
+      userPathReader: async () => null,
+      userPathWriter: async () => {}
+    })
+
+    const status = await installer.getStatus()
+    expect(status).toMatchObject({
+      commandName: 'leaffish',
+      commandPath: join(
+        localAppDataPath,
+        'Programs',
+        'Leaffish',
+        'resources',
+        'bin',
+        'leaffish.exe'
+      ),
+      launcherPath: join(resourcesPath, 'bin', 'leaffish.exe')
+    })
+  })
+
   it('does not overwrite the packaged Windows launcher while registering PATH', async () => {
     const fixture = await makeFixture()
     const localAppDataPath = fixture.root

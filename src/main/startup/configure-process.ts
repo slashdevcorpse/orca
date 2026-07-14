@@ -3,6 +3,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getVersionManagerBinPaths } from '../codex-cli/command'
 import { getMainE2EConfig } from '../e2e-config'
+import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution
+} from '../../shared/app-distribution'
 
 const DEV_PARENT_SHUTDOWN_GRACE_MS = 3000
 const HTTP1_COMPATIBILITY_ENV_VAR = 'ORCA_DISABLE_HTTP2'
@@ -176,7 +181,10 @@ export function patchPackagedProcessPath(): void {
   }
 }
 
-export function configureDevUserDataPath(isDev: boolean): void {
+export function configureDevUserDataPath(
+  isDev: boolean,
+  appDistribution: AppDistribution = APP_DISTRIBUTION
+): void {
   const e2eConfig = getMainE2EConfig()
   if (e2eConfig.userDataDir) {
     // Why: the E2E suite launches a fresh Electron app for each spec. A
@@ -187,7 +195,16 @@ export function configureDevUserDataPath(isDev: boolean): void {
     return
   }
 
+  const distribution = getAppDistributionDefinition(appDistribution)
+  if (!isDev && distribution.name === 'Orca') {
+    return
+  }
   if (!isDev) {
+    const userDataPath = join(app.getPath('appData'), distribution.userDataDirectoryName)
+    // Why: the fork must never share runtime metadata, profiles, browser data,
+    // or Electron's single-instance namespace with an official Orca install.
+    app.setPath('userData', userDataPath)
+    app.setPath('sessionData', join(userDataPath, 'session-data'))
     return
   }
   const overrideUserDataPath = process.env.ORCA_DEV_USER_DATA_PATH
@@ -202,7 +219,7 @@ export function configureDevUserDataPath(isDev: boolean): void {
   // publish runtime bootstrap files under userData. Without a dev-only path,
   // `pnpm dev` can overwrite the packaged app's runtime pointer and make the
   // public `orca` CLI look broken even though the packaged app is still open.
-  app.setPath('userData', join(app.getPath('appData'), 'orca-dev'))
+  app.setPath('userData', join(app.getPath('appData'), `${distribution.userDataDirectoryName}-dev`))
 }
 
 export function configureOrcaUserDataPathEnv(): void {

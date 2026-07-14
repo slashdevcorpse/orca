@@ -2,6 +2,7 @@ import type { SshConnection } from './ssh-connection'
 import { shellEscape } from './ssh-connection-utils'
 import { execCommand } from './ssh-relay-deploy-helpers'
 import { relaySocketNameForInstanceId } from './ssh-relay-instance-id'
+import { RELAY_REMOTE_DIR } from './relay-protocol'
 
 export async function forceStopRelayForTarget(
   conn: SshConnection,
@@ -11,7 +12,7 @@ export async function forceStopRelayForTarget(
   const escapedSockName = shellEscape(sockName)
   const script = [
     `sock_name=${escapedSockName}`,
-    'base="${HOME}/.orca-remote"',
+    `base="\${HOME}/${RELAY_REMOTE_DIR}"`,
     'if [ -d "$base" ]; then',
     '  for sock in "$base"/relay-*/"$sock_name" "$base"/"$sock_name"; do',
     '    [ -S "$sock" ] || continue',

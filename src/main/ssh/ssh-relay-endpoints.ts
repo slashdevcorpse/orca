@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution
+} from '../../shared/app-distribution'
+import {
   isWindowsRemoteHost,
   joinRemotePath,
   remoteBasename,
@@ -11,7 +16,8 @@ export const WINDOWS_ACTIVE_PIPE_MARKER_PREFIX = '.windows-active-pipe-'
 export function relayEndpointForHost(
   hostPlatform: RemoteHostPlatform,
   remoteDir: string,
-  sockName: string
+  sockName: string,
+  appDistribution: AppDistribution = APP_DISTRIBUTION
 ): string {
   if (!isWindowsRemoteHost(hostPlatform)) {
     return joinRemotePath(hostPlatform, remoteDir, sockName)
@@ -20,7 +26,8 @@ export function relayEndpointForHost(
     .update(`${remoteDir}\0${sockName}`)
     .digest('hex')
     .slice(0, 20)
-  return `\\\\.\\pipe\\orca-relay-${endpointHash}`
+  const pipePrefix = getAppDistributionDefinition(appDistribution).hostNamespaces.sshRelayPipePrefix
+  return `\\\\.\\pipe\\${pipePrefix}-${endpointHash}`
 }
 
 export function relayHookEndpointDirForHost(
@@ -43,11 +50,17 @@ export function windowsRelayFallbackSocketName(sockName: string): string {
 export function windowsRelayPipePathsForSocketName(
   hostPlatform: RemoteHostPlatform,
   remoteDir: string,
-  sockName: string
+  sockName: string,
+  appDistribution: AppDistribution = APP_DISTRIBUTION
 ): string[] {
   return [
-    relayEndpointForHost(hostPlatform, remoteDir, sockName),
-    relayEndpointForHost(hostPlatform, remoteDir, windowsRelayFallbackSocketName(sockName))
+    relayEndpointForHost(hostPlatform, remoteDir, sockName, appDistribution),
+    relayEndpointForHost(
+      hostPlatform,
+      remoteDir,
+      windowsRelayFallbackSocketName(sockName),
+      appDistribution
+    )
   ]
 }
 
@@ -63,6 +76,11 @@ export function windowsActivePipeMarkerPath(
   )
 }
 
-export function isWindowsRelayPipePath(value: string): boolean {
-  return /^\\\\[.?]\\pipe\\orca-relay-[0-9a-f]{20}$/i.test(value)
+export function isWindowsRelayPipePath(
+  value: string,
+  appDistribution: AppDistribution = APP_DISTRIBUTION
+): boolean {
+  const pipePrefix = getAppDistributionDefinition(appDistribution).hostNamespaces.sshRelayPipePrefix
+  const escapedPrefix = pipePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^\\\\\\\\[.?]\\\\pipe\\\\${escapedPrefix}-[0-9a-f]{20}$`, 'i').test(value)
 }

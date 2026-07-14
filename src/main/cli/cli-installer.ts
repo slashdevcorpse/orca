@@ -17,6 +17,12 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { CliInstallMethod, CliInstallStatus } from '../../shared/cli-install-types'
+import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution,
+  type AppDistributionDefinition
+} from '../../shared/app-distribution'
 import { buildAppImageCliWrapper } from './appimage-cli-wrapper'
 
 const execFileAsync = promisify(execFile)
@@ -28,6 +34,7 @@ const DEV_LAUNCHER_DIR = ['cli', 'bin']
 const WINDOWS_PATH_COMMAND_TIMEOUT_MS = 5_000
 
 type CliInstallerOptions = {
+  appDistribution?: AppDistribution
   platform?: NodeJS.Platform
   isPackaged?: boolean
   userDataPath?: string
@@ -53,6 +60,7 @@ type InstallSpec = {
 }
 
 export class CliInstaller {
+  private readonly distribution: AppDistributionDefinition
   private readonly platform: NodeJS.Platform
   private readonly isPackaged: boolean
   private readonly userDataPath: string
@@ -72,13 +80,19 @@ export class CliInstaller {
   private get commandName(): string {
     if (!this.isPackaged && !this.commandPathOverride) {
       // Why: development builds must not claim the production shell command.
-      return DEV_COMMAND_NAME
+      return this.distribution.cliCommandName === 'orca'
+        ? DEV_COMMAND_NAME
+        : `${this.distribution.cliCommandName}-dev`
+    }
+    if (this.distribution.cliCommandName !== 'orca') {
+      return this.distribution.cliCommandName
     }
     // Why: packaged Linux uses `orca-ide` to avoid shadowing GNOME Orca's /usr/bin/orca.
     return this.platform === 'linux' ? LINUX_COMMAND_NAME : 'orca'
   }
 
   constructor(options: CliInstallerOptions = {}) {
+    this.distribution = getAppDistributionDefinition(options.appDistribution ?? APP_DISTRIBUTION)
     this.platform = options.platform ?? process.platform
     this.isPackaged = options.isPackaged ?? app.isPackaged
     this.userDataPath = options.userDataPath ?? app.getPath('userData')
@@ -100,10 +114,14 @@ export class CliInstaller {
     // XDG-standard user bin dir already on PATH via shell init on arm64.
     // defaultMacCommandPath is a test seam: it feeds into the existence check
     // so tests can simulate arm64 without relying on the real /usr/local/bin.
-    const candidateMacPath = options.defaultMacCommandPath ?? DEFAULT_MAC_COMMAND_PATH
+    const candidateMacPath =
+      options.defaultMacCommandPath ??
+      (this.distribution.cliCommandName === 'orca'
+        ? DEFAULT_MAC_COMMAND_PATH
+        : `/usr/local/bin/${this.distribution.cliCommandName}`)
     this.macCommandPath = existsSync(dirname(candidateMacPath))
       ? candidateMacPath
-      : join(this.homePath, '.local', 'bin', 'orca')
+      : join(this.homePath, '.local', 'bin', this.distribution.cliCommandName)
     this.privilegedRunner = options.privilegedRunner ?? runMacPrivilegedCommand
     this.userPathReader = options.userPathReader ?? (() => readWindowsUserPath())
     this.userPathWriter = options.userPathWriter ?? ((value) => writeWindowsUserPath(value))
@@ -331,13 +349,19 @@ export class CliInstaller {
       // Why: default dev registration is a separate command, while tests and
       // diagnostics can still exercise production paths via commandPathOverride.
       if (this.platform === 'darwin') {
-        return `/usr/local/bin/${DEV_COMMAND_NAME}`
+        return `/usr/local/bin/${this.commandName}`
       }
       if (this.platform === 'linux') {
-        return join(this.homePath, '.local', 'bin', DEV_COMMAND_NAME)
+        return join(this.homePath, '.local', 'bin', this.commandName)
       }
       if (this.platform === 'win32') {
-        return join(this.localAppDataPath, 'Programs', 'Orca Dev', 'bin', `${DEV_COMMAND_NAME}.cmd`)
+        return join(
+          this.localAppDataPath,
+          'Programs',
+          `${this.distribution.name} Dev`,
+          'bin',
+          `${this.commandName}.cmd`
+        )
       }
     }
 
@@ -352,11 +376,18 @@ export class CliInstaller {
       // Why `orca-ide`: GNOME Orca (the screen reader) ships /usr/bin/orca on
       // most Linux distros. Using `orca-ide` avoids shadowing that system
       // command, matching the executableName already used for the Electron binary.
-      return join(this.homePath, '.local', 'bin', LINUX_COMMAND_NAME)
+      return join(this.homePath, '.local', 'bin', this.commandName)
     }
 
     if (this.platform === 'win32') {
-      return join(this.localAppDataPath, 'Programs', 'Orca', 'resources', 'bin', 'orca.exe')
+      return join(
+        this.localAppDataPath,
+        'Programs',
+        this.distribution.name,
+        'resources',
+        'bin',
+        `${this.distribution.cliCommandName}.exe`
+      )
     }
 
     return null
@@ -372,7 +403,11 @@ export class CliInstaller {
     }
 
     if (this.isPackaged) {
-      const bundledPath = getBundledLauncherPath(this.platform, this.resourcesPath)
+      const bundledPath = getBundledLauncherPath(
+        this.platform,
+        this.resourcesPath,
+        this.distribution.cliCommandName
+      )
       return bundledPath && existsSync(bundledPath) ? bundledPath : null
     }
 
@@ -1174,16 +1209,21 @@ function quotePowerShell(value: string): string {
 
 export function getBundledLauncherPath(
   platform: NodeJS.Platform,
-  resourcesPath: string
+  resourcesPath: string,
+  cliCommandName = 'orca'
 ): string | null {
   if (platform === 'darwin') {
-    return join(resourcesPath, 'bin', 'orca')
+    return join(resourcesPath, 'bin', cliCommandName)
   }
   if (platform === 'linux') {
-    return join(resourcesPath, 'bin', LINUX_COMMAND_NAME)
+    return join(
+      resourcesPath,
+      'bin',
+      cliCommandName === 'orca' ? LINUX_COMMAND_NAME : cliCommandName
+    )
   }
   if (platform === 'win32') {
-    return join(resourcesPath, 'bin', 'orca.exe')
+    return join(resourcesPath, 'bin', `${cliCommandName}.exe`)
   }
   return null
 }

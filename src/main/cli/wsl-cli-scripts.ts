@@ -1,23 +1,40 @@
-const MANAGED_MARKER = '# Orca managed WSL CLI launcher'
-const BRIDGE_MANAGED_MARKER = '# Orca managed WSL CLI PowerShell bridge'
+import {
+  getAppDistributionDefinition,
+  type AppDistributionDefinition
+} from '../../shared/app-distribution'
+
+function managedMarker(distribution: AppDistributionDefinition): string {
+  return `# ${distribution.name} managed WSL CLI launcher`
+}
+
+function bridgeManagedMarker(distribution: AppDistributionDefinition): string {
+  return `# ${distribution.name} managed WSL CLI PowerShell bridge`
+}
+
+function defaultBridgePath(distribution: AppDistributionDefinition): string {
+  const { wslCliBridgeFileName, wslCliDataDirectoryName } = distribution.hostNamespaces
+  return `\${XDG_DATA_HOME:-$HOME/.local/share}/${wslCliDataDirectoryName}/${wslCliBridgeFileName}`
+}
 
 export function buildWslLauncher(
   windowsLauncherPath: string,
-  bridgePath = '${XDG_DATA_HOME:-$HOME/.local/share}/orca/orca-wsl-bridge.ps1'
+  bridgePath?: string,
+  distribution = getAppDistributionDefinition()
 ): string {
   const encodedTarget = Buffer.from(windowsLauncherPath, 'utf8').toString('base64')
+  const resolvedBridgePath = bridgePath ?? defaultBridgePath(distribution)
   return `#!/usr/bin/env bash
 set -euo pipefail
-${MANAGED_MARKER}
+${managedMarker(distribution)}
 # ORCA_WIN_LAUNCHER_B64=${encodedTarget}
 ORCA_WIN_LAUNCHER=${quoteShell(windowsLauncherPath)}
-ORCA_BRIDGE_PS1=${quoteShell(bridgePath)}
+ORCA_BRIDGE_PS1=${quoteShell(resolvedBridgePath)}
 if command -v powershell.exe >/dev/null 2>&1; then
   ORCA_POWERSHELL=powershell.exe
 elif [ -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]; then
   ORCA_POWERSHELL=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
 else
-  echo "Orca WSL CLI requires Windows interop and could not find powershell.exe." >&2
+  echo "${distribution.name} WSL CLI requires Windows interop and could not find powershell.exe." >&2
   exit 1
 fi
 ORCA_BRIDGE_PS1_WIN=$(wslpath -w "$ORCA_BRIDGE_PS1")
@@ -25,8 +42,8 @@ exec "$ORCA_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$ORCA_BRIDGE_P
 `
 }
 
-export function buildWslBridgeScript(): string {
-  return `${BRIDGE_MANAGED_MARKER}
+export function buildWslBridgeScript(distribution = getAppDistributionDefinition()): string {
+  return `${bridgeManagedMarker(distribution)}
 param(
   [Parameter(Mandatory=$true)]
   [string]$OrcaLauncher,
@@ -51,10 +68,15 @@ try {
 `
 }
 
-export function getBridgePathFromCommandPath(commandPath: string): string {
-  // Why: both the current Linux command and the legacy pre-rename command
-  // share one WSL bridge under ~/.local/share/orca.
-  return `${commandPath.replace(/\/\.local\/bin\/(?:orca|orca-ide)$/, '/.local/share/orca')}/orca-wsl-bridge.ps1`
+export function getBridgePathFromCommandPath(
+  commandPath: string,
+  distribution = getAppDistributionDefinition()
+): string {
+  const { wslCliBridgeFileName, wslCliDataDirectoryName } = distribution.hostNamespaces
+  // Why: the launcher and bridge must share one distribution-owned namespace
+  // so Orca and Leaffish can be installed in the same WSL distro.
+  const dataRoot = commandPath.replace(/\/\.local\/bin\/[^/]+$/, '/.local/share')
+  return `${dataRoot}/${wslCliDataDirectoryName}/${wslCliBridgeFileName}`
 }
 
 export function buildSafeReplaceGuard(path: string, managedMarker: string): string {
@@ -71,12 +93,15 @@ export function buildSafeReplaceGuard(path: string, managedMarker: string): stri
   ].join('\n')
 }
 
-export function buildSafeRemoveCommand(commandPath: string): string {
-  const bridgePath = getBridgePathFromCommandPath(commandPath)
+export function buildSafeRemoveCommand(
+  commandPath: string,
+  distribution = getAppDistributionDefinition()
+): string {
+  const bridgePath = getBridgePathFromCommandPath(commandPath, distribution)
   return [
     'set -euo pipefail',
-    buildSafeReplaceGuard(commandPath, MANAGED_MARKER),
-    buildSafeReplaceGuard(bridgePath, BRIDGE_MANAGED_MARKER),
+    buildSafeReplaceGuard(commandPath, managedMarker(distribution)),
+    buildSafeReplaceGuard(bridgePath, bridgeManagedMarker(distribution)),
     `rm -f ${quoteShell(commandPath)} ${quoteShell(bridgePath)}`
   ].join('\n')
 }
@@ -99,12 +124,12 @@ export function getPosixDirname(path: string): string {
   return path.slice(0, path.lastIndexOf('/')) || '/'
 }
 
-export function getWslLauncherMarker(): string {
-  return MANAGED_MARKER
+export function getWslLauncherMarker(distribution = getAppDistributionDefinition()): string {
+  return managedMarker(distribution)
 }
 
-export function getWslBridgeMarker(): string {
-  return BRIDGE_MANAGED_MARKER
+export function getWslBridgeMarker(distribution = getAppDistributionDefinition()): string {
+  return bridgeManagedMarker(distribution)
 }
 
 export function quoteShell(value: string): string {

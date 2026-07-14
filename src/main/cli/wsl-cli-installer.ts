@@ -2,6 +2,12 @@
    splitting the installer would separate conflict checks from the operations they guard. */
 import { execFile } from 'node:child_process'
 import type { CliInstallStatus } from '../../shared/cli-install-types'
+import {
+  APP_DISTRIBUTION,
+  getAppDistributionDefinition,
+  type AppDistribution,
+  type AppDistributionDefinition
+} from '../../shared/app-distribution'
 import { getDefaultWslDistro } from '../wsl'
 import { CliInstaller } from './cli-installer'
 import {
@@ -17,10 +23,6 @@ import {
   quoteShell
 } from './wsl-cli-scripts'
 
-const MANAGED_MARKER = getWslLauncherMarker()
-const BRIDGE_MANAGED_MARKER = getWslBridgeMarker()
-const WSL_COMMAND_NAME = 'orca-ide'
-const LEGACY_WSL_COMMAND_NAME = 'orca'
 const WSL_COMMAND_TIMEOUT_MS = 10_000
 
 function normalizeManagedScriptContent(content: string): string {
@@ -32,6 +34,7 @@ function managedScriptMatches(content: string, expected: string, managed: boolea
 }
 
 type WslCliInstallerOptions = {
+  appDistribution?: AppDistribution
   platform?: NodeJS.Platform
   distro?: string | null
   hostInstaller?: Pick<CliInstaller, 'getStatus'>
@@ -39,15 +42,18 @@ type WslCliInstallerOptions = {
 }
 
 export class WslCliInstaller {
+  private readonly distribution: AppDistributionDefinition
   private readonly platform: NodeJS.Platform
   private readonly distro: string | null
   private readonly hostInstaller: Pick<CliInstaller, 'getStatus'>
   private readonly wslRunner: (distro: string, command: string) => Promise<string>
 
   constructor(options: WslCliInstallerOptions = {}) {
+    this.distribution = getAppDistributionDefinition(options.appDistribution ?? APP_DISTRIBUTION)
     this.platform = options.platform ?? process.platform
     this.distro = options.distro === undefined ? getDefaultWslDistro() : options.distro
-    this.hostInstaller = options.hostInstaller ?? new CliInstaller()
+    this.hostInstaller =
+      options.hostInstaller ?? new CliInstaller({ appDistribution: options.appDistribution })
     this.wslRunner = options.wslRunner ?? runWslCommand
   }
 
@@ -66,7 +72,7 @@ export class WslCliInstaller {
         state: 'not_installed',
         currentTarget: null,
         pathConfigured: ready.pathConfigured,
-        detail: `Register ${ready.commandPath} to use Orca from WSL.`
+        detail: `Register ${ready.commandPath} to use ${this.distribution.name} from WSL.`
       })
     }
 
@@ -78,18 +84,19 @@ export class WslCliInstaller {
         state: 'conflict',
         currentTarget: null,
         pathConfigured: ready.pathConfigured,
-        detail: `${ready.commandPath} exists but is not an Orca launcher script.`
+        detail: `${ready.commandPath} exists but is not a ${this.distribution.name} launcher script.`
       })
     }
 
-    const expected = buildWslLauncher(ready.launcherPath, ready.bridgePath)
-    const managed = content.includes(MANAGED_MARKER)
+    const expected = buildWslLauncher(ready.launcherPath, ready.bridgePath, this.distribution)
+    const managed = content.includes(getWslLauncherMarker(this.distribution))
     const currentTarget = managed ? parseManagedLauncherTarget(content) : null
     if (managedScriptMatches(content, expected, managed)) {
       const bridgeContent = await this.readCommandFile(ready.distro, ready.bridgePath)
-      const expectedBridge = buildWslBridgeScript()
+      const expectedBridge = buildWslBridgeScript(this.distribution)
       const bridgeManaged =
-        typeof bridgeContent === 'string' && bridgeContent.includes(BRIDGE_MANAGED_MARKER)
+        typeof bridgeContent === 'string' &&
+        bridgeContent.includes(getWslBridgeMarker(this.distribution))
       if (
         typeof bridgeContent === 'string' &&
         managedScriptMatches(bridgeContent, expectedBridge, bridgeManaged)
@@ -115,7 +122,7 @@ export class WslCliInstaller {
         detail:
           bridgeContent === null || bridgeManaged
             ? `${ready.commandPath} is missing its PowerShell bridge.`
-            : `${ready.bridgePath} exists but is not managed by Orca.`
+            : `${ready.bridgePath} exists but is not managed by ${this.distribution.name}.`
       })
     }
 
@@ -127,8 +134,8 @@ export class WslCliInstaller {
       currentTarget,
       pathConfigured: ready.pathConfigured,
       detail: managed
-        ? `${ready.commandPath} points to a different Orca launcher.`
-        : `${ready.commandPath} exists but is not managed by Orca.`
+        ? `${ready.commandPath} points to a different ${this.distribution.name} launcher.`
+        : `${ready.commandPath} exists but is not managed by ${this.distribution.name}.`
     })
   }
 
@@ -138,46 +145,53 @@ export class WslCliInstaller {
       throw new Error(status.detail ?? 'WSL CLI registration is unavailable.')
     }
     if (status.state === 'conflict') {
-      throw new Error(`Refusing to replace non-Orca command at ${status.commandPath}.`)
+      throw new Error(
+        `Refusing to replace non-${this.distribution.name} command at ${status.commandPath}.`
+      )
     }
+
+    const commandPath = status.commandPath
+    const bridgePath = getBridgePathFromCommandPath(commandPath, this.distribution)
+    const managedMarker = getWslLauncherMarker(this.distribution)
+    const bridgeManagedMarker = getWslBridgeMarker(this.distribution)
+    const legacyRemovalLines = this.distribution.hostNamespaces.wslLegacyCliCommandNames.flatMap(
+      (commandName, index) => {
+        const variableName = index === 0 ? 'legacy_command_path' : `legacy_command_path_${index}`
+        return [
+          `${variableName}=${quoteShell(`${getPosixDirname(commandPath)}/${commandName}`)}`,
+          `if [ -f "$${variableName}" ] && grep -Fq ${quoteShell(managedMarker)} "$${variableName}"; then rm -f "$${variableName}"; fi`
+        ]
+      }
+    )
 
     await this.run(
       this.distro as string,
       [
         'set -euo pipefail',
         `mkdir -p ${quoteShell(status.pathDirectory as string)}`,
-        `mkdir -p ${quoteShell(getPosixDirname(getBridgePathFromCommandPath(status.commandPath)))}`,
-        `command_tmp=${quoteShell(`${status.commandPath}.tmp`)}.$$`,
-        `bridge_path=${quoteShell(getBridgePathFromCommandPath(status.commandPath))}`,
-        `legacy_command_path=${quoteShell(
-          `${getPosixDirname(status.commandPath)}/${LEGACY_WSL_COMMAND_NAME}`
-        )}`,
+        `mkdir -p ${quoteShell(getPosixDirname(bridgePath))}`,
+        `command_tmp=${quoteShell(`${commandPath}.tmp`)}.$$`,
+        `bridge_path=${quoteShell(bridgePath)}`,
         'bridge_tmp="${bridge_path}.tmp.$$"',
         'cleanup() { rm -f "$command_tmp" "$bridge_tmp"; }',
         'trap cleanup EXIT',
-        buildSafeReplaceGuard(status.commandPath, MANAGED_MARKER),
-        buildSafeReplaceGuard(
-          getBridgePathFromCommandPath(status.commandPath),
-          BRIDGE_MANAGED_MARKER
-        ),
+        buildSafeReplaceGuard(commandPath, managedMarker),
+        buildSafeReplaceGuard(bridgePath, bridgeManagedMarker),
         `cat > "$command_tmp" <<'ORCA_WSL_CLI'`,
-        buildWslLauncher(status.launcherPath, getBridgePathFromCommandPath(status.commandPath)),
+        buildWslLauncher(status.launcherPath, bridgePath, this.distribution),
         'ORCA_WSL_CLI',
         `cat > "$bridge_tmp" <<'ORCA_WSL_BRIDGE'`,
-        buildWslBridgeScript(),
+        buildWslBridgeScript(this.distribution),
         'ORCA_WSL_BRIDGE',
         'chmod 755 "$command_tmp"',
         'chmod 644 "$bridge_tmp"',
-        buildSafeReplaceGuard(status.commandPath, MANAGED_MARKER),
-        buildSafeReplaceGuard(
-          getBridgePathFromCommandPath(status.commandPath),
-          BRIDGE_MANAGED_MARKER
-        ),
+        buildSafeReplaceGuard(commandPath, managedMarker),
+        buildSafeReplaceGuard(bridgePath, bridgeManagedMarker),
         // Why: the command was renamed to avoid GNOME Orca; remove only the
         // old Orca-managed WSL wrapper so unmanaged `orca` commands survive.
-        `if [ -f "$legacy_command_path" ] && grep -Fq ${quoteShell(MANAGED_MARKER)} "$legacy_command_path"; then rm -f "$legacy_command_path"; fi`,
-        `mv -f "$bridge_tmp" ${quoteShell(getBridgePathFromCommandPath(status.commandPath))}`,
-        `mv -f "$command_tmp" ${quoteShell(status.commandPath)}`,
+        ...legacyRemovalLines,
+        `mv -f "$bridge_tmp" ${quoteShell(bridgePath)}`,
+        `mv -f "$command_tmp" ${quoteShell(commandPath)}`,
         'trap - EXIT'
       ].join('\n')
     )
@@ -193,10 +207,15 @@ export class WslCliInstaller {
       return status
     }
     if (status.state === 'conflict') {
-      throw new Error(`Refusing to remove non-Orca command at ${status.commandPath}.`)
+      throw new Error(
+        `Refusing to remove non-${this.distribution.name} command at ${status.commandPath}.`
+      )
     }
 
-    await this.run(this.distro as string, buildSafeRemoveCommand(status.commandPath))
+    await this.run(
+      this.distro as string,
+      buildSafeRemoveCommand(status.commandPath, this.distribution)
+    )
     return this.getStatus()
   }
 
@@ -229,7 +248,7 @@ export class WslCliInstaller {
       return {
         status: this.unsupported(
           hostStatus.unsupportedReason ?? 'launcher_missing',
-          hostStatus.detail ?? 'The Windows Orca CLI launcher is missing.'
+          hostStatus.detail ?? `The Windows ${this.distribution.name} CLI launcher is missing.`
         )
       }
     }
@@ -252,14 +271,15 @@ export class WslCliInstaller {
       return {
         status: this.unsupported(
           'launcher_missing',
-          'WSL Windows interop is unavailable; Orca cannot launch the Windows CLI from WSL.'
+          `WSL Windows interop is unavailable; ${this.distribution.name} cannot launch the Windows CLI from WSL.`
         )
       }
     }
 
     const pathDirectory = `${home}/.local/bin`
-    // Why: matches the Linux CLI rename to `orca-ide` (avoids GNOME Orca conflict).
-    const commandPath = `${pathDirectory}/${WSL_COMMAND_NAME}`
+    // Why: the policy keeps Orca's GNOME-safe rename while giving forks their
+    // own command, so the distributions can coexist in one WSL home.
+    const commandPath = `${pathDirectory}/${this.distribution.hostNamespaces.wslCliCommandName}`
     const pathConfigured =
       (
         await this.run(
@@ -271,7 +291,7 @@ export class WslCliInstaller {
     return {
       distro: this.distro,
       commandPath,
-      bridgePath: getBridgePathFromCommandPath(commandPath),
+      bridgePath: getBridgePathFromCommandPath(commandPath, this.distribution),
       launcherPath: hostStatus.launcherPath,
       pathConfigured
     }
@@ -315,7 +335,7 @@ export class WslCliInstaller {
   }): CliInstallStatus {
     return {
       platform: 'linux',
-      commandName: WSL_COMMAND_NAME,
+      commandName: this.distribution.hostNamespaces.wslCliCommandName,
       commandPath: args.commandPath,
       pathDirectory: getPosixDirname(args.commandPath),
       pathConfigured: args.pathConfigured,
@@ -338,7 +358,7 @@ export class WslCliInstaller {
   ): CliInstallStatus {
     return {
       platform: 'linux',
-      commandName: WSL_COMMAND_NAME,
+      commandName: this.distribution.hostNamespaces.wslCliCommandName,
       commandPath: null,
       pathDirectory: null,
       pathConfigured: false,

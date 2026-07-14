@@ -34,6 +34,9 @@ importers:
       '@floating-ui/dom':
         specifier: 1.7.6
         version: 1.7.6
+      '@leaffish/agent-transcript':
+        specifier: file:packages/leaffish-agent-transcript
+        version: file:packages/leaffish-agent-transcript(lucide-react@0.577.0(react@19.2.5))(react@19.2.5)
       '@linear/sdk':
         specifier: ^82.1.0
         version: 82.1.0(graphql@16.13.2)
@@ -1052,6 +1055,12 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@leaffish/agent-transcript@file:packages/leaffish-agent-transcript':
+    resolution: {directory: packages/leaffish-agent-transcript, type: directory}
+    peerDependencies:
+      lucide-react: '>=0.400.0 <1'
+      react: '>=18.2.0 <20'
 
   '@linear/sdk@82.1.0':
     resolution: {integrity: sha512-Ok7o+LqXaenx6Um58NQqjQoQanDsCgAIe9yNgpVbqRSh5APz3Ds1kZUz2vWmSNTNATFZm1zDQtEktTMga2X7UQ==}
@@ -7287,6 +7296,11 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@leaffish/agent-transcript@file:packages/leaffish-agent-transcript(lucide-react@0.577.0(react@19.2.5))(react@19.2.5)':
+    dependencies:
+      lucide-react: 0.577.0(react@19.2.5)
+      react: 19.2.5
 
   '@linear/sdk@82.1.0(graphql@16.13.2)':
     dependencies:

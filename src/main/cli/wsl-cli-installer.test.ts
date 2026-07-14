@@ -1,5 +1,6 @@
 import type { CliInstallStatus } from '../../shared/cli-install-types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getAppDistributionDefinition } from '../../shared/app-distribution'
 
 const execFileMock = vi.hoisted(() => vi.fn())
 
@@ -137,6 +138,51 @@ describe('WslCliInstaller', () => {
     expect(_internals.getBridgePathFromCommandPath('/home/alice/.local/bin/orca')).toBe(
       '/home/alice/.local/share/orca/orca-wsl-bridge.ps1'
     )
+  })
+
+  it('uses Leaffish-owned WSL command, bridge, and management markers', async () => {
+    const leaffish = getAppDistributionDefinition('leaffish')
+    const calls: string[] = []
+    const installer = new WslCliInstaller({
+      appDistribution: 'leaffish',
+      platform: 'win32',
+      distro: 'Ubuntu',
+      hostInstaller: {
+        getStatus: async () => makeHostStatus('C:\\Leaffish\\resources\\bin\\leaffish.cmd')
+      },
+      wslRunner: async (_distro, command) => {
+        calls.push(command)
+        if (command.includes('printf %s "$HOME"')) {
+          return '/home/alice'
+        }
+        if (command.includes('command -v powershell.exe')) {
+          return 'yes'
+        }
+        if (command.includes('case ":$PATH:"')) {
+          return 'yes'
+        }
+        if (command.includes('cat ')) {
+          return '__ORCA_MISSING__'
+        }
+        throw new Error(`Unexpected WSL command: ${command}`)
+      }
+    })
+
+    await expect(installer.getStatus()).resolves.toMatchObject({
+      commandName: 'leaffish',
+      commandPath: '/home/alice/.local/bin/leaffish',
+      state: 'not_installed'
+    })
+    expect(
+      _internals.getBridgePathFromCommandPath('/home/alice/.local/bin/leaffish', leaffish)
+    ).toBe('/home/alice/.local/share/leaffish/leaffish-wsl-bridge.ps1')
+    expect(
+      _internals.buildWslLauncher('C:\\Leaffish\\leaffish.cmd', undefined, leaffish)
+    ).toContain('# Leaffish managed WSL CLI launcher')
+    expect(_internals.buildWslBridgeScript(leaffish)).toContain(
+      '# Leaffish managed WSL CLI PowerShell bridge'
+    )
+    expect(calls.join('\n')).not.toContain('/.local/share/orca/')
   })
 
   it('reports installed WSL launchers whose bin directory is missing from PATH', async () => {

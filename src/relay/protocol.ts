@@ -1,8 +1,10 @@
 // Self-contained relay protocol — mirrors src/main/ssh/relay-protocol.ts
 // but has no Electron dependencies. Deployed standalone to remote hosts.
 
+import { getAppDistributionDefinition } from '../shared/app-distribution'
+
 export const RELAY_VERSION = '0.1.0'
-export const RELAY_SENTINEL = `ORCA-RELAY v${RELAY_VERSION} READY\n`
+export const RELAY_SENTINEL = `${getAppDistributionDefinition().hostNamespaces.sshRelaySentinelName} v${RELAY_VERSION} READY\n`
 
 export const HEADER_LENGTH = 13
 export const MAX_MESSAGE_SIZE = 16 * 1024 * 1024

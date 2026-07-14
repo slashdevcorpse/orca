@@ -9,8 +9,18 @@ import {
 } from './native-chat-types'
 
 const textBlock: NativeChatBlock = { type: 'text', text: 'hello' }
-const toolCallBlock: NativeChatBlock = { type: 'tool-call', name: 'Edit', input: { path: 'a' } }
-const toolResultBlock: NativeChatBlock = { type: 'tool-result', output: 'done', isError: false }
+const toolCallBlock: NativeChatBlock = {
+  type: 'tool-call',
+  name: 'Edit',
+  input: { path: 'a' },
+  callId: 'call-1'
+}
+const toolResultBlock: NativeChatBlock = {
+  type: 'tool-result',
+  output: 'done',
+  isError: false,
+  callId: 'call-1'
+}
 const imageRefBlock: NativeChatBlock = { type: 'image-ref', path: '/tmp/a.png', alt: 'a' }
 
 describe('native chat block guards', () => {
@@ -23,11 +33,13 @@ describe('native chat block guards', () => {
 
   it('isToolCallBlock narrows only tool-call blocks', () => {
     expect(isToolCallBlock(toolCallBlock)).toBe(true)
+    expect(isToolCallBlock(toolCallBlock) && toolCallBlock.callId).toBe('call-1')
     expect(isToolCallBlock(textBlock)).toBe(false)
   })
 
   it('isToolResultBlock narrows only tool-result blocks', () => {
     expect(isToolResultBlock(toolResultBlock)).toBe(true)
+    expect(isToolResultBlock(toolResultBlock) && toolResultBlock.callId).toBe('call-1')
     expect(isToolResultBlock(toolCallBlock)).toBe(false)
   })
 

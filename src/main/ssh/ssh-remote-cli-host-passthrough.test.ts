@@ -79,10 +79,24 @@ describe('buildHostCliEnv', () => {
     expect(env.ORCA_WORKSPACE_ID).toBe('ws-1')
     expect(env.PATH).toBe('/host/bin')
     expect(env.ORCA_USER_DATA_PATH).toBe('/host/user-data')
+    expect(env.ORCA_DISTRIBUTION).toBe('orca')
     expect(env.ORCA_CLI_CWD).toBe('/home/alice/wt/sub')
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
     expect(env.NODE_OPTIONS).toBeUndefined()
     expect(env.ORCA_NODE_OPTIONS).toBe('--inspect')
+  })
+
+  it('binds host CLI subprocesses to the Leaffish distribution', () => {
+    const env = buildHostCliEnv({
+      hostEnv: {},
+      remoteEnv: {},
+      userDataPath: '/host/leaffish-data',
+      remoteCwd: '/remote/worktree',
+      appDistribution: 'leaffish'
+    })
+
+    expect(env.ORCA_DISTRIBUTION).toBe('leaffish')
+    expect(env.ORCA_USER_DATA_PATH).toBe('/host/leaffish-data')
   })
 })
 

@@ -7,8 +7,9 @@ import {
   getZshShellReadyMarkerRegistrationBlock,
   getZshStartupFileSourceBlock
 } from '../main/shell-templates'
+import { getAppDistributionDefinition } from '../shared/app-distribution'
 
-const RELAY_SHELL_READY_DIR = '.orca-relay/shell-ready'
+const RELAY_SHELL_READY_DIR = `${getAppDistributionDefinition().hostNamespaces.relayRuntimeDirectoryName}/shell-ready`
 const POSIX_LOGIN_ARGS = ['-l']
 const SHELL_READY_MARKER_ESCAPED = '\\033]777;orca-shell-ready\\007'
 

@@ -52,34 +52,76 @@ export function orderNativeChatMessages(messages: NativeChatMessage[]): NativeCh
   return [...messages].sort(compareMessages)
 }
 
-/** Collect every tool-result across the whole conversation in document order so
- *  a call can find its answer even when the result lands in a later message (the
- *  common transcript shape: assistant emits the call, a following tool message
- *  carries the result). Results carry no originating name in our model, so they
- *  are handed out FIFO to calls. */
-function collectToolResults(messages: NativeChatMessage[]): NativeChatToolResultBlock[] {
+type ToolResultPairing = Map<NativeChatToolCallBlock, NativeChatToolResultBlock>
+
+/** Pair provider-identified calls first, then retain document-order FIFO for
+ *  legacy transcripts whose blocks do not carry correlation ids. */
+function pairToolResults(messages: NativeChatMessage[]): ToolResultPairing {
+  const calls: NativeChatToolCallBlock[] = []
   const results: NativeChatToolResultBlock[] = []
   for (const message of messages) {
     for (const block of message.blocks) {
-      if (isToolResultBlock(block)) {
+      if (isToolCallBlock(block)) {
+        calls.push(block)
+      } else if (isToolResultBlock(block)) {
         results.push(block)
       }
     }
   }
-  return results
+
+  const pairings: ToolResultPairing = new Map()
+  const consumedResults = results.map(() => false)
+  const resultIndexesByCallId = new Map<string, number[]>()
+  for (const [index, result] of results.entries()) {
+    if (!result.callId) {
+      continue
+    }
+    const indexes = resultIndexesByCallId.get(result.callId) ?? []
+    indexes.push(index)
+    resultIndexesByCallId.set(result.callId, indexes)
+  }
+
+  // Why: reserve exact matches before FIFO so an unlabelled earlier call cannot
+  // consume a labelled result belonging to a later concurrent call.
+  for (const call of calls) {
+    if (!call.callId) {
+      continue
+    }
+    const resultIndex = resultIndexesByCallId.get(call.callId)?.shift()
+    if (resultIndex === undefined) {
+      continue
+    }
+    pairings.set(call, results[resultIndex])
+    consumedResults[resultIndex] = true
+  }
+
+  let resultCursor = 0
+  for (const call of calls) {
+    if (pairings.has(call)) {
+      continue
+    }
+    while (consumedResults[resultCursor]) {
+      resultCursor += 1
+    }
+    const result = results[resultCursor]
+    if (!result) {
+      break
+    }
+    pairings.set(call, result)
+    consumedResults[resultCursor] = true
+  }
+  return pairings
 }
 
 /**
  * Flatten ordered messages into render items, pairing tool calls with results.
- * Result pairing is FIFO across the conversation: tool results in our model
- * carry no back-reference to a call id, so we match the Nth call to the Nth
- * result in document order — the order both providers emit them. A call with no
- * remaining result renders as in-flight (`result: null`).
+ * Provider call ids win even when results arrive out of order. Blocks without a
+ * usable id retain the historical FIFO behavior. A call with no remaining
+ * result renders as in-flight (`result: null`).
  */
 export function buildNativeChatRenderItems(messages: NativeChatMessage[]): NativeChatRenderItem[] {
   const ordered = orderNativeChatMessages(messages)
-  const resultQueue = collectToolResults(ordered)
-  let resultCursor = 0
+  const resultPairings = pairToolResults(ordered)
 
   const items: NativeChatRenderItem[] = []
   for (const message of ordered) {
@@ -88,11 +130,7 @@ export function buildNativeChatRenderItems(messages: NativeChatMessage[]): Nativ
 
     for (const block of message.blocks) {
       if (isToolCallBlock(block)) {
-        const result = resultQueue[resultCursor] ?? null
-        if (result) {
-          resultCursor += 1
-        }
-        steps.push({ call: block, result })
+        steps.push({ call: block, result: resultPairings.get(block) ?? null })
       } else if (isToolResultBlock(block)) {
         // Results are emitted as steps from the call side; skip standalone ones.
         continue

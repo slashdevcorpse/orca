@@ -32,6 +32,7 @@ import {
   getReleaseDownloadUrl
 } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
+import { APP_DISTRIBUTION, resolveLeaffishUpdateFeedUrl } from '../shared/app-distribution'
 
 type CheckFailureSource = 'event' | 'promise' | 'fallback-promise'
 type MissingManifestPrereleaseFallbackResult = { userInitiated: boolean }
@@ -53,6 +54,15 @@ const QUIT_AND_INSTALL_DELAY_MS = 100
 const PRE_QUIT_CLEANUP_TIMEOUT_MS = 2_500
 const UPDATE_CHECK_SILENT_SETTLE_DELAY_MS = 1_000
 const UPDATE_CHECK_STALL_TIMEOUT_MS = 45_000
+const ORCA_RELEASE_FEED_URL = 'https://github.com/stablyai/orca/releases/latest/download'
+const LEAFFISH_RELEASE_FEED_URL = resolveLeaffishUpdateFeedUrl()
+const UPDATES_ENABLED = APP_DISTRIBUTION === 'orca' || LEAFFISH_RELEASE_FEED_URL !== null
+
+function getConfiguredReleaseFeedUrl(): string {
+  return APP_DISTRIBUTION === 'leaffish'
+    ? (LEAFFISH_RELEASE_FEED_URL as string)
+    : ORCA_RELEASE_FEED_URL
+}
 
 let mainWindowRef: BrowserWindow | null = null
 let currentStatus: UpdateStatus = { state: 'idle' }
@@ -948,6 +958,12 @@ async function pinDefaultReleaseFeed(
   variant: UpdateCheckVariant = 'default'
 ): Promise<ReleaseFeedPreflightResult> {
   const autoUpdater = getAutoUpdater()
+  if (APP_DISTRIBUTION === 'leaffish') {
+    clearPrereleaseFallbackContext()
+    clearPublishingWindowLastGoodCheck()
+    autoUpdater.setFeedURL({ provider: 'generic', url: getConfiguredReleaseFeedUrl() })
+    return 'ready'
+  }
   // Why: the /releases/latest/download/ redirect can move between the update
   // check and the later manual download click. Pinning to the concrete tag
   // keeps the manifest and ZIP asset on the same release.
@@ -1026,7 +1042,7 @@ async function pinDefaultReleaseFeed(
   } else {
     clearPrereleaseFallbackContext()
     clearPublishingWindowLastGoodCheck()
-    const url = 'https://github.com/stablyai/orca/releases/latest/download'
+    const url = ORCA_RELEASE_FEED_URL
     console.info(
       `[updater] release feed fallback: current=${currentVersion} includePrerelease=${includePrerelease} → ${url}`
     )
@@ -1101,7 +1117,7 @@ function runBackgroundUpdateCheck(
   if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
     return
   }
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || !UPDATES_ENABLED) {
     sendStatus({ state: 'not-available' })
     return
   }
@@ -1182,7 +1198,7 @@ function enableIncludePrerelease(): void {
 
 /** Menu-triggered check — delegates feedback to renderer toasts via userInitiated flag */
 export function checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || !UPDATES_ENABLED) {
     sendStatus({ state: 'not-available', userInitiated: true })
     return
   }
@@ -1287,7 +1303,7 @@ export function quitAndInstall(): void {
 }
 
 async function checkForUpdateNudge(): Promise<void> {
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || APP_DISTRIBUTION !== 'orca') {
     return
   }
   if (nudgeCheckInFlight) {
@@ -1378,6 +1394,12 @@ export function setupAutoUpdater(
   if (is.dev) {
     return
   }
+  if (!UPDATES_ENABLED) {
+    // Why: a personal Leaffish package must never fall back to Orca's signed
+    // release feed. Updates are opt-in at build time with a fork-owned URL.
+    sendStatus({ state: 'not-available' })
+    return
+  }
 
   const autoUpdater = getAutoUpdater()
   autoUpdater.autoDownload = false
@@ -1413,7 +1435,7 @@ export function setupAutoUpdater(
   // moving /latest redirect changing between check and download.
   autoUpdater.setFeedURL({
     provider: 'generic',
-    url: 'https://github.com/stablyai/orca/releases/latest/download'
+    url: getConfiguredReleaseFeedUrl()
   })
 
   if (autoUpdaterInitialized) {
@@ -1461,8 +1483,10 @@ export function setupAutoUpdater(
     }
   })
 
-  void checkForUpdateNudge()
-  scheduleUpdateNudgeCheck()
+  if (APP_DISTRIBUTION === 'orca') {
+    void checkForUpdateNudge()
+    scheduleUpdateNudgeCheck()
+  }
 
   const checkDailyOnWake = () => {
     void checkForUpdateNudge()

@@ -66,4 +66,44 @@ describe('Windows CLI launcher', () => {
       rmSync(appRoot, { recursive: true, force: true })
     }
   })
+
+  itWindows('targets the isolated Leaffish executable and userData path', () => {
+    const appRoot = mkdtempSync(join(tmpdir(), 'leaffish cli launcher '))
+    try {
+      const resourcesPath = join(appRoot, 'resources')
+      const launcherPath = join(resourcesPath, 'bin', 'leaffish.exe')
+      const cliPath = join(resourcesPath, 'app.asar.unpacked', 'out', 'cli', 'index.js')
+      mkdirSync(join(resourcesPath, 'bin'), { recursive: true })
+      mkdirSync(dirname(cliPath), { recursive: true })
+      copyFileSync(process.execPath, join(appRoot, 'Leaffish.exe'))
+      writeFileSync(
+        cliPath,
+        `process.stdout.write(JSON.stringify({
+  distribution: process.env.ORCA_DISTRIBUTION,
+  userDataPath: process.env.ORCA_USER_DATA_PATH
+}))\n`,
+        'utf8'
+      )
+
+      const build = spawnSync(
+        process.execPath,
+        ['config/scripts/build-windows-cli-launcher.mjs', '--output', launcherPath],
+        {
+          cwd: projectRoot,
+          encoding: 'utf8',
+          env: { ...process.env, ORCA_DISTRIBUTION: 'leaffish' }
+        }
+      )
+      expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0)
+
+      const launch = spawnSync(launcherPath, [], { encoding: 'utf8' })
+      expect(launch.status, launch.stderr).toBe(0)
+      expect(JSON.parse(launch.stdout)).toEqual({
+        distribution: 'leaffish',
+        userDataPath: join(process.env.APPDATA, 'leaffish')
+      })
+    } finally {
+      rmSync(appRoot, { recursive: true, force: true })
+    }
+  })
 })

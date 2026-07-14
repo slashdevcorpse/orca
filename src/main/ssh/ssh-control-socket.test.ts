@@ -115,6 +115,16 @@ describe.skipIf(process.platform === 'win32')('getControlSocketPath', () => {
     expect(path).toMatch(/^\/run\/user\/501\/orca-ssh\/[0-9a-f]{16}$/)
   })
 
+  it('keeps Leaffish control masters outside the Orca socket directory', () => {
+    const path = getControlSocketPath(createTarget(), createResolved(), 'leaffish')
+
+    expect(path).toMatch(new RegExp(`/leaffish-ssh-${CURRENT_UID}/[0-9a-f]{16}$`))
+    expect(mkdirSyncMock).toHaveBeenCalledWith(`/tmp/leaffish-ssh-${CURRENT_UID}`, {
+      recursive: true,
+      mode: 0o700
+    })
+  })
+
   it('falls back to non-multiplexed SSH when the control directory is unsafe', () => {
     lstatSyncMock.mockReturnValue({
       isDirectory: () => false,

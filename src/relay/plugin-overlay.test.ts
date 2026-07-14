@@ -77,6 +77,61 @@ describe('PluginOverlayManager', () => {
     const file = join(dir!, 'extensions', 'orca-agent-status.ts')
     expect(existsSync(file)).toBe(true)
     expect(readFileSync(file, 'utf8')).toContain('@orca-managed-pi-extension')
+    expect(readFileSync(file, 'utf8')).toContain(
+      '@orca-shared-pi-status-bridge protocol=1 revision=1'
+    )
+  })
+
+  it('reuses one shared Pi bridge when another distribution prepares the same agent home', () => {
+    const secondManager = new PluginOverlayManager({ homeDir })
+    manager.setSources({ piExtensionSource: '// Orca bridge source' })
+    secondManager.setSources({ piExtensionSource: '// Leaffish bridge source' })
+
+    const firstDir = manager.materializePi('tab-orca:0')
+    const secondDir = secondManager.materializePi('tab-leaffish:0')
+    const extensionsDir = join(firstDir!, 'extensions')
+    const extensionPath = join(extensionsDir, 'orca-agent-status.ts')
+
+    expect(secondDir).toBe(firstDir)
+    expect(readFileSync(extensionPath, 'utf8')).toContain('// Orca bridge source')
+    expect(readFileSync(extensionPath, 'utf8')).not.toContain('// Leaffish bridge source')
+    expect(readdirSync(extensionsDir).filter((entry) => entry.includes('agent-status'))).toEqual([
+      'orca-agent-status.ts'
+    ])
+    expect(readdirSync(extensionsDir).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('preserves a newer compatible shared Pi bridge revision', () => {
+    const piAgentDir = join(homeDir, '.pi', 'agent')
+    const extensionPath = join(piAgentDir, 'extensions', 'orca-agent-status.ts')
+    mkdirSync(join(piAgentDir, 'extensions'), { recursive: true })
+    writeFileSync(
+      extensionPath,
+      [
+        '// @orca-shared-pi-status-bridge protocol=1 revision=2',
+        '// @orca-managed-pi-extension',
+        '// newer bridge source'
+      ].join('\n')
+    )
+    manager.setSources({ piExtensionSource: '// older bridge source' })
+
+    expect(manager.materializePi('tab-older:0')).toBe(piAgentDir)
+    expect(readFileSync(extensionPath, 'utf8')).toContain('// newer bridge source')
+    expect(readFileSync(extensionPath, 'utf8')).not.toContain('// older bridge source')
+  })
+
+  it('upgrades a legacy managed Pi extension into the shared bridge contract', () => {
+    const piAgentDir = join(homeDir, '.pi', 'agent')
+    const extensionPath = join(piAgentDir, 'extensions', 'orca-agent-status.ts')
+    mkdirSync(join(piAgentDir, 'extensions'), { recursive: true })
+    writeFileSync(extensionPath, '// @orca-managed-pi-extension\n// legacy bridge source')
+    manager.setSources({ piExtensionSource: '// current bridge source' })
+
+    expect(manager.materializePi('tab-upgrade:0')).toBe(piAgentDir)
+    expect(readFileSync(extensionPath, 'utf8')).toContain(
+      '@orca-shared-pi-status-bridge protocol=1 revision=1'
+    )
+    expect(readFileSync(extensionPath, 'utf8')).toContain('// current bridge source')
   })
 
   it("does not overwrite a user's same-named remote Pi extension file", () => {

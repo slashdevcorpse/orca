@@ -67,6 +67,87 @@ describe('electron-builder config', () => {
     )
   })
 
+  it('creates an isolated Windows package for the Leaffish distribution', () => {
+    const configPath = require.resolve('../electron-builder.config.cjs')
+    const originalDistribution = process.env.ORCA_DISTRIBUTION
+    const originalFeed = process.env.LEAFFISH_UPDATE_FEED_URL
+    try {
+      delete require.cache[configPath]
+      process.env.ORCA_DISTRIBUTION = 'leaffish'
+      delete process.env.LEAFFISH_UPDATE_FEED_URL
+      const leaffish = require('../electron-builder.config.cjs')
+
+      expect(leaffish).toMatchObject({
+        appId: 'com.slashdevcorpse.leaffish',
+        productName: 'Leaffish',
+        directories: { output: 'dist/leaffish' },
+        extraMetadata: {
+          name: 'leaffish',
+          productName: 'Leaffish',
+          orcaDistribution: 'leaffish'
+        },
+        win: { executableName: 'Leaffish' },
+        nsis: { artifactName: 'leaffish-windows-setup.${ext}' },
+        publish: null
+      })
+      expect(leaffish.win.signtoolOptions).toBeUndefined()
+      expect(leaffish.win.extraResources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            from: 'native/windows-cli-launcher/.build/leaffish.exe',
+            to: 'bin/leaffish.exe'
+          }),
+          expect.objectContaining({
+            from: 'resources/win32/bin/leaffish.cmd',
+            to: 'bin/leaffish.cmd'
+          })
+        ])
+      )
+      expect(leaffish.nsis.include).toContain('leaffish-daemon-host-uninstall.nsh')
+    } finally {
+      if (originalDistribution === undefined) {
+        delete process.env.ORCA_DISTRIBUTION
+      } else {
+        process.env.ORCA_DISTRIBUTION = originalDistribution
+      }
+      if (originalFeed === undefined) {
+        delete process.env.LEAFFISH_UPDATE_FEED_URL
+      } else {
+        process.env.LEAFFISH_UPDATE_FEED_URL = originalFeed
+      }
+      delete require.cache[configPath]
+      require('../electron-builder.config.cjs')
+    }
+  })
+
+  it('publishes Leaffish only to an explicit HTTPS generic feed', () => {
+    const configPath = require.resolve('../electron-builder.config.cjs')
+    const originalDistribution = process.env.ORCA_DISTRIBUTION
+    const originalFeed = process.env.LEAFFISH_UPDATE_FEED_URL
+    try {
+      delete require.cache[configPath]
+      process.env.ORCA_DISTRIBUTION = 'leaffish'
+      process.env.LEAFFISH_UPDATE_FEED_URL = 'https://updates.example.com/leaffish/'
+      expect(require('../electron-builder.config.cjs').publish).toEqual({
+        provider: 'generic',
+        url: 'https://updates.example.com/leaffish'
+      })
+    } finally {
+      if (originalDistribution === undefined) {
+        delete process.env.ORCA_DISTRIBUTION
+      } else {
+        process.env.ORCA_DISTRIBUTION = originalDistribution
+      }
+      if (originalFeed === undefined) {
+        delete process.env.LEAFFISH_UPDATE_FEED_URL
+      } else {
+        process.env.LEAFFISH_UPDATE_FEED_URL = originalFeed
+      }
+      delete require.cache[configPath]
+      require('../electron-builder.config.cjs')
+    }
+  })
+
   // Why: on macOS 26 UNUserNotificationCenter aborts for executables launched
   // from Contents/Resources, so the helper must ship in Contents/MacOS (#7929).
   it('ships the mac notification-status helper in Contents/MacOS, not Resources', () => {

@@ -22,8 +22,8 @@ export const SINGLE_INSTANCE_LOCK_BYPASS_MESSAGE =
  *
  * Electron derives the lock identity from the current `userData` path, so
  * callers MUST invoke this AFTER `configureDevUserDataPath(is.dev)` — that
- * way dev (`orca-dev` userData) and packaged (`orca` userData) runs lock in
- * separate namespaces instead of serialising against each other.
+ * way dev, official Orca, and packaged forks derive separate lock namespaces
+ * from their isolated userData paths.
  */
 export function acquireSingleInstanceLock(app: App, onSecondInstance: () => void): boolean {
   if (!app.requestSingleInstanceLock()) {

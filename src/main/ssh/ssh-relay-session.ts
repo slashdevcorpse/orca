@@ -76,6 +76,10 @@ import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/executi
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import { shellEscape } from './ssh-connection-utils'
+import {
+  getAppDistributionDefinition,
+  type AppDistributionDefinition
+} from '../../shared/app-distribution'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
@@ -86,6 +90,7 @@ type RemoteCliBridgeEnv = {
   nodePath: string
   sockPath: string
   hostPlatform: RemoteHostPlatform
+  distribution: AppDistributionDefinition
   pathDelimiter?: ':' | ';'
 }
 
@@ -93,6 +98,7 @@ type ExpectedPtyIdentity = { paneKey?: string; tabId?: string }
 
 const REMOTE_GROK_HOME_MAX_LENGTH = 4096
 const REMOTE_GROK_HOME_PROBE_TIMEOUT_MS = 8_000
+const APP_DEFINITION = getAppDistributionDefinition()
 
 function defaultRemoteGrokHome(remoteHome: string): string {
   const home = remoteHome.replace(/\/+$/, '') || remoteHome
@@ -338,11 +344,17 @@ export class SshRelaySession {
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
           ? {
               remoteHome,
-              binDir: joinRemotePath(hostPlatform, remoteHome, '.orca-relay', 'bin'),
+              binDir: joinRemotePath(
+                hostPlatform,
+                remoteHome,
+                APP_DEFINITION.hostNamespaces.relayRuntimeDirectoryName,
+                'bin'
+              ),
               relayDir: remoteRelayDir,
               nodePath,
               sockPath,
               hostPlatform,
+              distribution: APP_DEFINITION,
               pathDelimiter: hostPlatform.pathDelimiter
             }
           : null
@@ -466,11 +478,17 @@ export class SshRelaySession {
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
           ? {
               remoteHome,
-              binDir: joinRemotePath(hostPlatform, remoteHome, '.orca-relay', 'bin'),
+              binDir: joinRemotePath(
+                hostPlatform,
+                remoteHome,
+                APP_DEFINITION.hostNamespaces.relayRuntimeDirectoryName,
+                'bin'
+              ),
               relayDir: remoteRelayDir,
               nodePath,
               sockPath,
               hostPlatform,
+              distribution: APP_DEFINITION,
               pathDelimiter: hostPlatform.pathDelimiter
             }
           : null
@@ -660,7 +678,7 @@ export class SshRelaySession {
       // so this raw-connection install can fail — that must not fail the
       // whole connection, matching the managed-hook install above.
       console.warn(
-        `[ssh-relay-session] remote orca CLI shim install failed for ${this.targetId}: ${
+        `[ssh-relay-session] remote ${APP_DEFINITION.cliCommandName} CLI shim install failed for ${this.targetId}: ${
           error instanceof Error ? error.message : String(error)
         }`
       )
@@ -809,7 +827,7 @@ export class SshRelaySession {
   private wireUpRemoteOrcaCli(mux: SshChannelMultiplexer): void {
     mux.onRequest('orca.cli', async (params) => {
       if (!this.runtime) {
-        throw new Error('Orca runtime is unavailable')
+        throw new Error(`${APP_DEFINITION.name} runtime is unavailable`)
       }
       const argv = Array.isArray(params.argv)
         ? params.argv.filter((item): item is string => typeof item === 'string')
@@ -1274,7 +1292,11 @@ function buildRemoteCliShim(env: RemoteCliBridgeEnv): {
   contents: string
 } {
   if (isWindowsRemoteHost(env.hostPlatform)) {
-    const shimPath = joinRemotePath(env.hostPlatform, env.binDir, 'orca.cmd')
+    const shimPath = joinRemotePath(
+      env.hostPlatform,
+      env.binDir,
+      `${env.distribution.cliCommandName}.cmd`
+    )
     return {
       path: shimPath,
       contents: [
@@ -1290,7 +1312,7 @@ function buildRemoteCliShim(env: RemoteCliBridgeEnv): {
     }
   }
 
-  const shimPath = joinRemotePath(env.hostPlatform, env.binDir, 'orca')
+  const shimPath = joinRemotePath(env.hostPlatform, env.binDir, env.distribution.cliCommandName)
   return {
     path: shimPath,
     contents: [
@@ -1300,7 +1322,7 @@ function buildRemoteCliShim(env: RemoteCliBridgeEnv): {
       `ORCA_RELAY_DIR=\${ORCA_RELAY_DIR:-${quoteSh(env.relayDir)}}`,
       `ORCA_RELAY_SOCKET_PATH=\${ORCA_RELAY_SOCKET_PATH:-${quoteSh(env.sockPath)}}`,
       'if [ ! -S "$ORCA_RELAY_SOCKET_PATH" ]; then',
-      '  echo "Orca SSH CLI bridge cannot find the relay socket: $ORCA_RELAY_SOCKET_PATH" >&2',
+      `  echo "${env.distribution.name} SSH CLI bridge cannot find the relay socket: $ORCA_RELAY_SOCKET_PATH" >&2`,
       '  exit 1',
       'fi',
       'exec "$ORCA_RELAY_NODE_PATH" "$ORCA_RELAY_DIR/relay.js" --sock-path "$ORCA_RELAY_SOCKET_PATH" --orca-cli "$@"',

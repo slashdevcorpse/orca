@@ -14,6 +14,12 @@ const {
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
+const isLeaffishDistribution = process.env.ORCA_DISTRIBUTION === 'leaffish'
+const productName = isLeaffishDistribution ? 'Leaffish' : 'Orca'
+const windowsExecutableName = productName
+const cliExecutableName = isLeaffishDistribution ? 'leaffish.exe' : 'orca.exe'
+const cliCommandScriptName = isLeaffishDistribution ? 'leaffish.cmd' : 'orca.cmd'
+const leaffishUpdateFeedUrl = readHttpsUrl(process.env.LEAFFISH_UPDATE_FEED_URL)
 const featureWallResources = {
   from: 'resources/onboarding/feature-wall',
   to: 'onboarding/feature-wall'
@@ -47,11 +53,23 @@ const winSpeechNativeResource = {
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
-  appId: 'com.stablyai.orca',
-  productName: 'Orca',
+  appId: isLeaffishDistribution ? 'com.slashdevcorpse.leaffish' : 'com.stablyai.orca',
+  productName,
   directories: {
-    buildResources: 'resources/build'
+    buildResources: 'resources/build',
+    ...(isLeaffishDistribution ? { output: 'dist/leaffish' } : {})
   },
+  ...(isLeaffishDistribution
+    ? {
+        // Why: electron-updater derives its cache namespace from package name;
+        // keeping `orca` here would let the fork and official app share it.
+        extraMetadata: {
+          name: 'leaffish',
+          productName: 'Leaffish',
+          orcaDistribution: 'leaffish'
+        }
+      }
+    : {}),
   files: [
     '!**/.vscode/*',
     // Why: these repo-only inputs are either bundled into out/ or copied via
@@ -172,22 +190,24 @@ module.exports = {
     }
   },
   win: {
-    executableName: 'Orca',
+    executableName: windowsExecutableName,
     // Why: Windows installers are signed after electron-builder packaging by
     // SignPath, so the packager cannot infer the updater publisherName.
-    signtoolOptions: {
-      publisherName: 'SignPath Foundation'
-    },
+    ...(isLeaffishDistribution
+      ? process.env.LEAFFISH_WINDOWS_PUBLISHER_NAME
+        ? { signtoolOptions: { publisherName: process.env.LEAFFISH_WINDOWS_PUBLISHER_NAME } }
+        : {}
+      : { signtoolOptions: { publisherName: 'SignPath Foundation' } }),
     extraResources: [
       ...commonExtraResources,
       winSpeechNativeResource,
       {
-        from: 'resources/win32/bin/orca.cmd',
-        to: 'bin/orca.cmd'
+        from: `resources/win32/bin/${cliCommandScriptName}`,
+        to: `bin/${cliCommandScriptName}`
       },
       {
-        from: 'native/windows-cli-launcher/.build/orca.exe',
-        to: 'bin/orca.exe'
+        from: `native/windows-cli-launcher/.build/${cliExecutableName}`,
+        to: `bin/${cliExecutableName}`
       },
       {
         from: 'node_modules/agent-browser/bin/agent-browser-win32-x64.exe',
@@ -201,14 +221,20 @@ module.exports = {
     ]
   },
   nsis: {
-    artifactName: 'orca-windows-setup.${ext}',
+    artifactName: isLeaffishDistribution
+      ? 'leaffish-windows-setup.${ext}'
+      : 'orca-windows-setup.${ext}',
     shortcutName: '${productName}',
     uninstallDisplayName: '${productName}',
     createDesktopShortcut: 'always',
     // Why: on a real uninstall, stop and remove the relocated terminal daemon
     // (which lives outside the install dir under LOCALAPPDATA by design). Guarded
     // by ${isUpdated} inside so it never runs during an update's uninstallOldVersion.
-    include: resolve(__dirname, 'nsis', 'daemon-host-uninstall.nsh')
+    include: resolve(
+      __dirname,
+      'nsis',
+      isLeaffishDistribution ? 'leaffish-daemon-host-uninstall.nsh' : 'daemon-host-uninstall.nsh'
+    )
   },
   mac: {
     icon: 'resources/build/icon.icns',
@@ -375,11 +401,27 @@ module.exports = {
   // on Intel Macs. The beforeBuild hook performs Orca's targeted rebuild and
   // returns false so electron-builder does not rebuild optional cpu-features.
   npmRebuild: true,
-  publish: {
-    provider: 'github',
-    owner: 'stablyai',
-    repo: 'orca',
-    releaseType: 'release'
+  publish: isLeaffishDistribution
+    ? leaffishUpdateFeedUrl
+      ? { provider: 'generic', url: leaffishUpdateFeedUrl }
+      : null
+    : {
+        provider: 'github',
+        owner: 'stablyai',
+        repo: 'orca',
+        releaseType: 'release'
+      }
+}
+
+function readHttpsUrl(value) {
+  if (!value) {
+    return null
+  }
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' ? url.href.replace(/\/$/, '') : null
+  } catch {
+    return null
   }
 }
 

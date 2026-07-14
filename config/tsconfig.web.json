@@ -5,7 +5,8 @@
     "../src/renderer/src/**/*",
     "../src/renderer/src/**/*.tsx",
     "../src/preload/api-types.ts",
-    "../src/shared/**/*"
+    "../src/shared/**/*",
+    "../packages/leaffish-agent-transcript/src/**/*"
   ],
   "compilerOptions": {
     "composite": true,

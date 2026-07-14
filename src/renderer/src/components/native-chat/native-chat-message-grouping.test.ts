@@ -78,6 +78,59 @@ describe('buildNativeChatRenderItems', () => {
     expect(step.step.result?.output).toBe('file.txt')
   })
 
+  it('pairs identified results to their calls when results arrive out of order', () => {
+    const items = buildNativeChatRenderItems([
+      msg({
+        id: 'calls',
+        timestamp: 1,
+        blocks: [
+          { type: 'tool-call', name: 'Read', input: { path: 'a' }, callId: 'call-a' },
+          { type: 'tool-call', name: 'Read', input: { path: 'b' }, callId: 'call-b' }
+        ]
+      }),
+      msg({
+        id: 'results',
+        role: 'tool',
+        timestamp: 2,
+        blocks: [
+          { type: 'tool-result', output: 'contents-b', callId: 'call-b' },
+          { type: 'tool-result', output: 'contents-a', callId: 'call-a' }
+        ]
+      })
+    ])
+    const steps = items.filter((item) => item.kind === 'tool-step')
+
+    expect(steps.map((step) => step.step.result?.output)).toEqual(['contents-a', 'contents-b'])
+  })
+
+  it('reserves identified results before applying the FIFO fallback', () => {
+    const items = buildNativeChatRenderItems([
+      msg({
+        id: 'calls',
+        timestamp: 1,
+        blocks: [
+          { type: 'tool-call', name: 'Legacy', input: {} },
+          { type: 'tool-call', name: 'Read', input: {}, callId: 'identified' }
+        ]
+      }),
+      msg({
+        id: 'results',
+        role: 'tool',
+        timestamp: 2,
+        blocks: [
+          { type: 'tool-result', output: 'identified output', callId: 'identified' },
+          { type: 'tool-result', output: 'legacy output' }
+        ]
+      })
+    ])
+    const steps = items.filter((item) => item.kind === 'tool-step')
+
+    expect(steps.map((step) => step.step.result?.output)).toEqual([
+      'legacy output',
+      'identified output'
+    ])
+  })
+
   it('leaves an unanswered tool-call in flight (result null)', () => {
     const items = buildNativeChatRenderItems([
       msg({

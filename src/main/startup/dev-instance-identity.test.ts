@@ -12,6 +12,14 @@ describe('dev-instance-identity', () => {
     })
   })
 
+  it('isolates the packaged Leaffish identity', () => {
+    expect(getDevInstanceIdentity(false, { ORCA_DISTRIBUTION: 'leaffish' })).toMatchObject({
+      name: 'Leaffish',
+      isDev: false,
+      appUserModelId: 'com.slashdevcorpse.leaffish'
+    })
+  })
+
   it('derives a readable dev label from worktree and branch env', () => {
     const identity = getDevInstanceIdentity(true, {
       ORCA_DEV_REPO_ROOT: '/repo/worktrees/dev-indicator',
@@ -53,5 +61,16 @@ describe('dev-instance-identity', () => {
     expect(identity.devLabel).toBe('manual label')
     expect(identity.name).toBe('Orca: feature/other')
     expect(identity.dockBadgeLabel).toBeNull()
+  })
+
+  it('uses the Leaffish namespace for fork development runs', () => {
+    const identity = getDevInstanceIdentity(true, {
+      ORCA_DISTRIBUTION: 'leaffish',
+      ORCA_DEV_REPO_ROOT: '/repo/leaffish',
+      ORCA_DEV_BRANCH: 'feature/timeline'
+    })
+
+    expect(identity.name).toBe('Leaffish: feature/timeline')
+    expect(identity.appUserModelId).toMatch(/^com\.slashdevcorpse\.leaffish\.dev\.[a-f0-9]{10}$/)
   })
 })

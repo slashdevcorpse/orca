@@ -2,6 +2,7 @@ import type { RemoteHostPlatform } from './ssh-remote-platform'
 import { isWindowsRemoteHost, joinRemotePath, remoteDirname } from './ssh-remote-platform'
 import { powerShellCommand, powerShellLiteral, powerShellNativeArg } from './ssh-remote-powershell'
 import { shellEscape } from './ssh-connection-utils'
+import { getAppDistributionDefinition } from '../../shared/app-distribution'
 
 export function readRemoteHomeCommand(host: RemoteHostPlatform): string {
   if (!isWindowsRemoteHost(host)) {
@@ -160,18 +161,22 @@ export function relayLivenessProbeCommand(
   if (!windowsOptions) {
     return powerShellCommand("'ALIVE'")
   }
+  const pipeNamePrefix = getAppDistributionDefinition().hostNamespaces.sshRelayPipePrefix
+  const dotPipePrefix = JSON.stringify(`\\\\.\\pipe\\${pipeNamePrefix}-`)
+  const questionPipePrefix = JSON.stringify(`\\\\?\\pipe\\${pipeNamePrefix}-`)
   const js = [
     'const fs=require("fs"),path=require("path"),net=require("net");',
     'const [dir,...seed]=process.argv.slice(1);',
-    'const valid=/^\\\\\\\\[.?]\\\\pipe\\\\orca-relay-[0-9a-f]{20}$/i;',
+    `const prefixes=[${dotPipePrefix},${questionPipePrefix}];`,
+    'const valid=p=>typeof p==="string"&&prefixes.some(x=>p.startsWith(x)&&/^[0-9a-f]{20}$/i.test(p.slice(x.length)));',
     'const pipes=[];',
     'let markerCount=0;',
-    'for(const p of seed){if(valid.test(p)&&!pipes.includes(p))pipes.push(p)}',
+    'for(const p of seed){if(valid(p)&&!pipes.includes(p))pipes.push(p)}',
     'try{for(const name of fs.readdirSync(dir)){',
     'if(!name.startsWith(".windows-active-pipe-"))continue;',
     'markerCount++;',
     'const p=fs.readFileSync(path.join(dir,name),"utf8").trim();',
-    'if(valid.test(p)&&!pipes.includes(p))pipes.push(p)',
+    'if(valid(p)&&!pipes.includes(p))pipes.push(p)',
     '}}catch{}',
     'if(markerCount===0&&pipes.length===0){process.stdout.write("ALIVE");process.exit(0)}',
     'let i=0;',

@@ -18,6 +18,8 @@ export default defineConfig({
     include: [
       'src/**/*.test.ts',
       'src/**/*.test.tsx',
+      'packages/**/*.test.ts',
+      'packages/**/*.test.tsx',
       'config/scripts/**/*.test.mjs',
       'tests/e2e/**/*.unit.test.ts'
     ],

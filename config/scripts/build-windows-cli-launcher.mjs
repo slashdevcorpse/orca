@@ -10,7 +10,8 @@ if (process.platform !== 'win32') {
 
 const repoRoot = resolve(import.meta.dirname, '../..')
 const sourcePath = join(repoRoot, 'native', 'windows-cli-launcher', 'OrcaCliLauncher.cs')
-const outputPath = readArg('--output') ?? defaultOutputPath(repoRoot)
+const isLeaffishDistribution = process.env.ORCA_DISTRIBUTION === 'leaffish'
+const outputPath = readArg('--output') ?? defaultOutputPath(repoRoot, isLeaffishDistribution)
 const compilerPath = findFrameworkCompiler(process.env)
 
 if (!compilerPath) {
@@ -20,7 +21,15 @@ if (!compilerPath) {
 mkdirSync(dirname(outputPath), { recursive: true })
 const result = spawnSync(
   compilerPath,
-  ['/nologo', '/target:exe', '/optimize+', '/warnaserror+', `/out:${outputPath}`, sourcePath],
+  [
+    '/nologo',
+    '/target:exe',
+    '/optimize+',
+    '/warnaserror+',
+    ...(isLeaffishDistribution ? ['/define:LEAFFISH'] : []),
+    `/out:${outputPath}`,
+    sourcePath
+  ],
   { cwd: repoRoot, stdio: 'inherit' }
 )
 
@@ -34,8 +43,14 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1)
 }
 
-function defaultOutputPath(projectRoot) {
-  return join(projectRoot, 'native', 'windows-cli-launcher', '.build', 'orca.exe')
+function defaultOutputPath(projectRoot, isLeaffish) {
+  return join(
+    projectRoot,
+    'native',
+    'windows-cli-launcher',
+    '.build',
+    isLeaffish ? 'leaffish.exe' : 'orca.exe'
+  )
 }
 
 function findFrameworkCompiler(env) {
